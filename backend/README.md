@@ -1,0 +1,109 @@
+# GridSense Backend
+
+Grid-Aware Energy Copilot API for Victorian Households.
+
+## Quick Start
+
+### Prerequisites
+- Python 3.11+
+- PostgreSQL 16+
+- uv or pip
+
+### Installation
+
+```bash
+# Install dependencies
+pip install -e .
+
+# Or with uv
+uv pip install -e .
+```
+
+### Environment Setup
+
+Create a `.env` file:
+
+```env
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/gridsense
+SECRET_KEY=your-super-secret-key-change-this
+DEBUG=true
+```
+
+### Database Setup
+
+```bash
+# Start PostgreSQL (Docker)
+docker run -d --name gridsense-db -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=gridsense -p 5432:5432 postgres:16
+
+# Tables are created automatically on first run
+```
+
+### Running the Server
+
+```bash
+# Development
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+
+# Production
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
+```
+
+### API Documentation
+
+Once running, visit:
+- Swagger UI: http://localhost:8000/docs
+- ReDoc: http://localhost:8000/redoc
+
+## API Endpoints
+
+### Authentication
+- `POST /api/v1/auth/register` - Create account
+- `POST /api/v1/auth/login` - Get access token
+- `GET /api/v1/auth/me` - Get current user
+
+### Meters
+- `GET /api/v1/meters` - List meters
+- `POST /api/v1/meters` - Create meter
+- `GET /api/v1/meters/{id}` - Get meter
+- `DELETE /api/v1/meters/{id}` - Delete meter
+
+### Upload
+- `POST /api/v1/upload` - Upload NEM12 file
+
+### Usage
+- `GET /api/v1/usage/summary/{meter_id}` - Usage summary
+- `GET /api/v1/usage/daily/{meter_id}` - Daily breakdown
+- `GET /api/v1/usage/hourly/{meter_id}` - Hourly pattern
+- `GET /api/v1/usage/weekly/{meter_id}` - Weekly pattern
+
+### Recommendations
+- `GET /api/v1/recommendations` - All recommendations
+- `GET /api/v1/recommendations/{meter_id}` - Meter recommendations
+
+## NEM12 File Format
+
+NEM12 is the standard format for smart meter data in Australia's National Electricity Market. You can obtain your NEM12 file from:
+
+1. Your energy retailer's online portal
+2. Request from your distribution network (e.g., AusNet, United Energy)
+3. Some retailers email monthly NEM12 exports
+
+## Project Structure
+
+```
+backend/
+├── app/
+│   ├── main.py              # FastAPI application
+│   ├── config.py            # Settings
+│   ├── database.py          # DB connection
+│   ├── models/              # SQLAlchemy models
+│   ├── schemas/             # Pydantic schemas
+│   ├── api/                 # API routes
+│   └── services/            # Business logic
+├── tests/                   # Test suite
+└── pyproject.toml           # Dependencies
+```
+
+## License
+
+MIT
