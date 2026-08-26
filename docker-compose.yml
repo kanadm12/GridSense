@@ -6,14 +6,25 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: gridsense
-    ports:
-      - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
       timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: gridsense-redis
+    ports:
+      - "6380:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
       retries: 5
 
   api:
@@ -25,14 +36,76 @@ services:
       - "8000:8000"
     environment:
       DATABASE_URL: postgresql://postgres:postgres@db:5432/gridsense
+      REDIS_URL: redis://redis:6379/0
       SECRET_KEY: ${SECRET_KEY:-dev-secret-change-me}
       DEBUG: "true"
+      EMAIL_PROVIDER: ${EMAIL_PROVIDER:-local}
+      EMAIL_FROM: ${EMAIL_FROM:-GridSense <no-reply@gridsense.local>}
+      FRONTEND_RESET_URL: ${FRONTEND_RESET_URL:-gridsense://reset-password}
+      AUTOMATION_PROVIDER: ${AUTOMATION_PROVIDER:-simulator}
+      HOME_ASSISTANT_URL: ${HOME_ASSISTANT_URL:-http://homeassistant:8123}
+      HOME_ASSISTANT_TOKEN: ${HOME_ASSISTANT_TOKEN:-}
     depends_on:
       db:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     volumes:
       - ./backend:/app
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+    healthcheck:
+      test:
+        ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready')"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: gridsense-worker
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/gridsense
+      REDIS_URL: redis://redis:6379/0
+      SECRET_KEY: ${SECRET_KEY:-dev-secret-change-me}
+      DEBUG: "true"
+      EMAIL_PROVIDER: ${EMAIL_PROVIDER:-local}
+      EMAIL_FROM: ${EMAIL_FROM:-GridSense <no-reply@gridsense.local>}
+      FRONTEND_RESET_URL: ${FRONTEND_RESET_URL:-gridsense://reset-password}
+      AUTOMATION_PROVIDER: ${AUTOMATION_PROVIDER:-simulator}
+      HOME_ASSISTANT_URL: ${HOME_ASSISTANT_URL:-http://homeassistant:8123}
+      HOME_ASSISTANT_TOKEN: ${HOME_ASSISTANT_TOKEN:-}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+    command: python -m app.worker
+
+  scheduler:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: gridsense-scheduler
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      SECRET_KEY: ${SECRET_KEY:-dev-secret-change-me}
+      DEBUG: "true"
+    depends_on:
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+    command: python -m app.scheduler
 
 volumes:
   postgres_data:
+  redis_data:

@@ -4,11 +4,12 @@ from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
-from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
-from slowapi.util import get_remote_address
+
+from app.rate_limit import limiter
 
 from app.api import (
     auth_router,
@@ -24,39 +25,43 @@ from app.api import (
     upload_router,
     usage_router,
 )
+from app.api.health import router as health_router
+from app.api.errors import (
+    http_exception_handler,
+    validation_exception_handler,
+    general_exception_handler,
+)
 from app.config import get_settings
-from app.database import engine
-from app.models import Base
+from app.logging_config import setup_logging, get_logger
+from app.middleware import LoggingMiddleware
 
 settings = get_settings()
 
-# Rate limiter for auth endpoints
-limiter = Limiter(key_func=get_remote_address)
-
+# Setup structured logging
+setup_logging(debug=settings.debug)
+logger = get_logger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Application lifespan handler for startup/shutdown events."""
-    # Startup: Create database tables
-    Base.metadata.create_all(bind=engine)
+    logger.info("Application starting", extra={"event": "startup", "debug": settings.debug})
     yield
-    # Shutdown: Nothing to clean up
+    logger.info("Application shutting down", extra={"event": "shutdown"})
 
 
 app = FastAPI(
     title=settings.app_name,
-    description="""
-    GridSense is a grid-aware energy copilot that helps Victorian households
+    description="""GridSense is a grid-aware energy copilot that helps Victorian households
     optimize their electricity usage, reduce costs, and support grid stability.
-    
+
     ## Features
-    
+
     - **NEM12 Upload**: Parse and import smart meter data from your energy retailer
     - **Usage Analytics**: Visualize consumption patterns by day, hour, and week
     - **Recommendations**: Get personalized advice to shift load and reduce costs
-    
+
     ## Getting Started
-    
+
     1. Register an account using `/api/v1/auth/register`
     2. Login to get an access token via `/api/v1/auth/login`
     3. Upload your NEM12 file using `/api/v1/upload`
@@ -70,6 +75,13 @@ app = FastAPI(
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+# Add custom error handlers
+app.add_exception_handler(RequestValidationError, validation_exception_handler)
+app.add_exception_handler(Exception, general_exception_handler)
+
+# Add logging middleware
+app.add_middleware(LoggingMiddleware)
+
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
@@ -80,6 +92,7 @@ app.add_middleware(
 )
 
 # Include routers
+app.include_router(health_router)  # No prefix - /health/live, /health/ready
 app.include_router(auth_router, prefix=settings.api_v1_prefix)
 app.include_router(password_reset_router, prefix=settings.api_v1_prefix)
 app.include_router(meters_router, prefix=settings.api_v1_prefix)
@@ -101,10 +114,5 @@ async def root() -> dict[str, str]:
         "name": settings.app_name,
         "version": "0.1.0",
         "docs": "/docs",
+        "health": "/health/live",
     }
-
-
-@app.get("/health")
-async def health_check() -> dict[str, str]:
-    """Health check endpoint."""
-    return {"status": "healthy"}

@@ -28,6 +28,16 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 def get_db() -> Generator[Session, None, None]:
     """Dependency that provides a database session."""
     db = SessionLocal()
+    # Ensure tables exist for the bound engine (helps in-memory SQLite used in tests)
+    try:
+        from app.models import Base  # noqa: E402
+
+        bind = db.get_bind()
+        if bind is not None:
+            Base.metadata.create_all(bind=bind)
+    except Exception:
+        # If models can't be imported or creation fails, continue and let callers handle errors
+        pass
     try:
         yield db
     finally:

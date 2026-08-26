@@ -13,7 +13,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { Colors, Spacing, FontSizes, BorderRadius } from '@/constants/theme';
+import { Colors, Spacing, FontSize, BorderRadius } from '@/constants/theme';
 import { useAuthStore } from '@/stores';
 import api from '@/services/api';
 
@@ -32,12 +32,12 @@ interface QuickAction {
 }
 
 export default function ChatScreen() {
-  const { token } = useAuthStore();
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [quickActions, setQuickActions] = useState<QuickAction[]>([]);
   const [greeting, setGreeting] = useState('');
+  const [sessionId, setSessionId] = useState<number | null>(null);
   const flatListRef = useRef<FlatList>(null);
 
   // Fetch welcome message and quick actions
@@ -47,9 +47,7 @@ export default function ChatScreen() {
 
   const fetchWelcome = async () => {
     try {
-      const response = await api.get('/chat/welcome', {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const response = await api.get('/chat/welcome');
       setGreeting(response.data.greeting);
       setQuickActions(response.data.quick_actions);
       
@@ -90,9 +88,12 @@ export default function ChatScreen() {
       const response = await api.post('/chat/message', {
         message: text.trim(),
         conversation_history: history,
-      }, {
-        headers: { Authorization: `Bearer ${token}` },
+        session_id: sessionId ?? undefined,
       });
+
+      if (response.data.session_id) {
+        setSessionId(response.data.session_id);
+      }
 
       const assistantMessage: Message = {
         id: (Date.now() + 1).toString(),
@@ -112,7 +113,7 @@ export default function ChatScreen() {
     } finally {
       setIsLoading(false);
     }
-  }, [messages, token, isLoading]);
+  }, [messages, isLoading]);
 
   const handleQuickAction = (action: QuickAction) => {
     sendMessage(action.prompt);
@@ -291,11 +292,11 @@ const styles = StyleSheet.create({
   },
   userBubble: {
     backgroundColor: Colors.primary,
-    borderBottomRightRadius: BorderRadius.xs,
+    borderBottomRightRadius: BorderRadius.sm,
   },
   assistantBubble: {
     backgroundColor: Colors.white,
-    borderBottomLeftRadius: BorderRadius.xs,
+    borderBottomLeftRadius: BorderRadius.sm,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.05,
@@ -303,7 +304,7 @@ const styles = StyleSheet.create({
     elevation: 1,
   },
   messageText: {
-    fontSize: FontSizes.md,
+    fontSize: FontSize.md,
     color: Colors.text,
     lineHeight: 22,
   },
@@ -325,14 +326,14 @@ const styles = StyleSheet.create({
     borderColor: Colors.primary + '30',
   },
   suggestionText: {
-    fontSize: FontSizes.sm,
+    fontSize: FontSize.sm,
     color: Colors.primary,
   },
   quickActionsContainer: {
     marginBottom: Spacing.lg,
   },
   quickActionsTitle: {
-    fontSize: FontSizes.sm,
+    fontSize: FontSize.sm,
     color: Colors.gray500,
     marginBottom: Spacing.sm,
     fontWeight: '500',
@@ -355,7 +356,7 @@ const styles = StyleSheet.create({
     elevation: 1,
   },
   quickActionLabel: {
-    fontSize: FontSizes.sm,
+    fontSize: FontSize.sm,
     color: Colors.text,
     marginTop: Spacing.xs,
     textAlign: 'center',
@@ -375,7 +376,7 @@ const styles = StyleSheet.create({
   typingText: {
     marginLeft: Spacing.xs,
     color: Colors.gray500,
-    fontSize: FontSizes.sm,
+    fontSize: FontSize.sm,
   },
   inputContainer: {
     flexDirection: 'row',
@@ -391,7 +392,7 @@ const styles = StyleSheet.create({
     borderRadius: BorderRadius.lg,
     paddingHorizontal: Spacing.md,
     paddingVertical: Spacing.sm,
-    fontSize: FontSizes.md,
+    fontSize: FontSize.md,
     color: Colors.text,
     maxHeight: 100,
     marginRight: Spacing.sm,

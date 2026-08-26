@@ -1,12 +1,12 @@
 """Insights API endpoints for forecasting and anomaly detection."""
 
 from datetime import date, datetime
-from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
+from app.api.ownership import verify_meter_ownership
 from app.database import get_db
 from app.models.meter import Meter
 from app.models.user import User
@@ -29,20 +29,14 @@ router = APIRouter(prefix="/insights", tags=["insights"])
 def _get_user_meter(db: Session, user_id: int, meter_id: int | None = None) -> Meter:
     """Get the user's meter, validating ownership."""
     if meter_id:
-        meter = db.query(Meter).filter(
-            Meter.id == meter_id,
-            Meter.user_id == user_id,
-        ).first()
-        if not meter:
-            raise HTTPException(status_code=404, detail="Meter not found")
-        return meter
-    
+        return verify_meter_ownership(db, meter_id, user_id)
+
     # Get default active meter
     meter = db.query(Meter).filter(
         Meter.user_id == user_id,
-        Meter.is_active == True,
+        Meter.is_active.is_(True),
     ).first()
-    
+
     if not meter:
         raise HTTPException(
             status_code=404,
@@ -66,7 +60,7 @@ async def get_bill_forecast(
     """
     meter = _get_user_meter(db, current_user.id, meter_id)
     forecaster = get_forecaster(db)
-    
+
     try:
         forecast = forecaster.forecast_monthly_bill(meter.id)
         return BillForecast(**forecast)
@@ -87,7 +81,7 @@ async def get_bill_trend(
     """Get historical bill trend for the past N months."""
     meter = _get_user_meter(db, current_user.id, meter_id)
     forecaster = get_forecaster(db)
-    
+
     try:
         trend_data = forecaster.get_bill_trend(meter.id, months)
         return BillTrend(
@@ -117,7 +111,7 @@ async def get_anomalies(
     """
     meter = _get_user_meter(db, current_user.id, meter_id)
     detector = get_anomaly_detector(db)
-    
+
     try:
         report = detector.get_all_anomalies(meter.id, days)
         return AnomalyReport(**report)
@@ -144,8 +138,7 @@ async def get_daily_brief(
     meter = _get_user_meter(db, current_user.id, meter_id)
     analyzer = UsageAnalyzer(db)
     forecaster = get_forecaster(db)
-    detector = get_anomaly_detector(db)
-    
+
     # Get time-based greeting
     hour = datetime.now().hour
     if hour < 12:
@@ -156,10 +149,9 @@ async def get_daily_brief(
         greeting = "Good evening!"
 
     # Get yesterday's usage
-    yesterday = date.today() - datetime.timedelta(days=1) if hasattr(datetime, 'timedelta') else date.today()
     from datetime import timedelta
     yesterday = date.today() - timedelta(days=1)
-    
+
     try:
         daily_usage = analyzer.get_daily_usage(
             meter_id=meter.id,
@@ -167,7 +159,7 @@ async def get_daily_brief(
             end_date=yesterday,
             limit=1,
         )
-        
+
         if daily_usage:
             yesterday_kwh = daily_usage[0].total_kwh
             yesterday_cost = daily_usage[0].estimated_cost
@@ -183,7 +175,7 @@ async def get_daily_brief(
             end_date=date.today() - timedelta(days=1),
             limit=30,
         )
-        
+
         if monthly_usage:
             avg_daily = sum(d.total_kwh for d in monthly_usage) / len(monthly_usage)
             comparison = ((yesterday_kwh - avg_daily) / avg_daily * 100) if avg_daily > 0 else 0
@@ -193,7 +185,7 @@ async def get_daily_brief(
 
         # Generate insights
         insights = []
-        
+
         # Usage comparison insight
         if comparison < -10:
             insights.append(Insight(
@@ -218,7 +210,10 @@ async def get_daily_brief(
                 insights.append(Insight(
                     type=InsightType.TIP,
                     title="Off-peak opportunity",
-                    message="Peak pricing starts at 3pm. Now is a good time to run the dishwasher or laundry!",
+                    message=(
+                        "Peak pricing starts at 3pm. Now is a good time to run "
+                        "the dishwasher or laundry!"
+                    ),
                     impact_dollars=0.20,
                     icon="clock",
                 ))
@@ -233,7 +228,10 @@ async def get_daily_brief(
             insights.append(Insight(
                 type=InsightType.SAVINGS_OPPORTUNITY,
                 title="Weekend off-peak",
-                message="It's the weekend - all-day off-peak rates! Great time for energy-intensive tasks.",
+                message=(
+                    "It's the weekend - all-day off-peak rates! Great time for "
+                    "energy-intensive tasks."
+                ),
                 icon="sun",
             ))
 
@@ -258,4 +256,91 @@ async def get_daily_brief(
         raise HTTPException(
             status_code=500,
             detail=f"Failed to generate daily brief: {str(e)}"
+        )
+
+
+@router.get("/ml-suggestions")
+async def get_ml_suggestions(
+    meter_id: int | None = Query(None, description="Specific meter ID"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Get ML model-based suggestions: forecasts and anomaly detection.
+
+    Returns:
+    - Next 14 days forecast (kWh per day)
+    - Recent anomalous days detected
+    - Status of ML models (available/not trained)
+    """
+    from app.ml.etl import extract_daily_series
+    from app.ml.predict import detect_anomalies, predict_forecast
+    from app.models.ml_training import MLTrainingJob
+
+    meter = _get_user_meter(db, current_user.id, meter_id)
+
+    try:
+        # Extract time-series data
+        df = extract_daily_series(db, meter.id)
+        latest_job = (
+            db.query(MLTrainingJob)
+            .filter(MLTrainingJob.meter_id == meter.id, MLTrainingJob.job_type == "all")
+            .order_by(MLTrainingJob.created_at.desc())
+            .first()
+        )
+
+        forecast = predict_forecast(meter.id, periods=14)
+        anomalies = detect_anomalies(meter.id, df)
+
+        response = {
+            "meter_id": meter.id,
+            "forecast": forecast or {"message": "Forecast model not trained yet"},
+            "anomalies": anomalies or {"message": "Anomaly detector model not trained yet"},
+            "model_status": {
+                "days_available": len(df),
+                "minimum_days": 20,
+                "forecast": "trained" if forecast else "unavailable",
+                "anomaly": "trained" if anomalies else "unavailable",
+                "training_job": (
+                    {
+                        "id": latest_job.id,
+                        "status": latest_job.status,
+                        "created_at": latest_job.created_at,
+                        "completed_at": latest_job.completed_at,
+                        "error": latest_job.error_message,
+                    }
+                    if latest_job
+                    else None
+                ),
+            },
+        }
+
+        if len(df) < 20:
+            response["model_status"]["forecast"] = "insufficient_data"
+            response["model_status"]["anomaly"] = "insufficient_data"
+        elif latest_job and latest_job.status in ("pending", "running"):
+            if not forecast:
+                response["model_status"]["forecast"] = "training"
+            if not anomalies:
+                response["model_status"]["anomaly"] = "training"
+            elif latest_job and latest_job.status == "failed":
+                if not forecast:
+                    response["model_status"]["forecast"] = "failed"
+                if not anomalies:
+                    response["model_status"]["anomaly"] = "failed"
+
+        # Add helpful messages if models aren't trained
+        if not forecast and len(df) < 20:
+            response["forecast"]["suggestion"] = (
+                "Upload more history to enable a personalized forecast"
+            )
+        if not anomalies and len(df) < 20:
+            response["anomalies"]["suggestion"] = (
+                "Upload more history to enable personalized anomaly detection"
+            )
+
+        return response
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to generate ML suggestions: {str(e)}"
         )

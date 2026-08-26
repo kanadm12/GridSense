@@ -3,7 +3,9 @@ node_modules/
 __pycache__/
 *.pyc
 .venv/
+.venv*/
 venv/
+env/
 .Python
 *.egg-info/
 
@@ -71,3 +73,24 @@ yarn-error.log*
 *.bak
 *.tmp
 .cache/
+
+# Research papers & documents (not part of the app)
+*.pdf
+*.docx
+*.docm
+
+# LaTeX journal-article template & build artifacts
+Download+the+journal+article+template+package*/
+*.tex
+*.cls
+*.bst
+*.sty
+*.aux
+*.bbl
+*.blg
+*.out
+*.synctex.gz
+*.eps
+
+# Claude Code worktrees (ephemeral, machine-local)
+**/.claude/worktrees/

@@ -1,6 +1,7 @@
 """Authentication service for password hashing and JWT tokens."""
 
 from datetime import datetime, timedelta, timezone
+import uuid
 
 from jose import JWTError, jwt
 from passlib.context import CryptContext
@@ -41,8 +42,14 @@ class AuthService:
     def create_refresh_token(data: dict) -> str:
         """Create a JWT refresh token with longer expiry."""
         to_encode = data.copy()
-        expire = datetime.now(timezone.utc) + timedelta(days=settings.refresh_token_expire_days)
-        to_encode.update({"exp": expire, "type": "refresh"})
+        now = datetime.now(timezone.utc)
+        expire = now + timedelta(days=settings.refresh_token_expire_days)
+        to_encode.update({
+            "exp": expire,
+            "type": "refresh",
+            "iat": int(now.timestamp()),
+            "jti": uuid.uuid4().hex,
+        })
         return jwt.encode(to_encode, settings.secret_key, algorithm=settings.algorithm)
 
     @staticmethod

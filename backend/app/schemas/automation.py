@@ -11,6 +11,9 @@ class SmartDeviceCreate(BaseModel):
     device_type: str
     brand: str | None = None
     model: str | None = None
+    integration_type: str = "simulator"
+    device_id: str | None = None
+    api_endpoint: str | None = None
     power_rating_watts: float | None = None
     standby_watts: float | None = None
     location: str | None = None
@@ -22,6 +25,9 @@ class SmartDeviceUpdate(BaseModel):
     name: str | None = None
     brand: str | None = None
     model: str | None = None
+    integration_type: str | None = None
+    device_id: str | None = None
+    api_endpoint: str | None = None
     power_rating_watts: float | None = None
     standby_watts: float | None = None
     location: str | None = None
@@ -36,6 +42,9 @@ class SmartDevice(BaseModel):
     device_type: str
     brand: str | None
     model: str | None
+    integration_type: str | None
+    device_id: str | None
+    api_endpoint: str | None
     power_rating_watts: float | None
     standby_watts: float | None
     location: str | None
@@ -127,6 +136,7 @@ class DeviceSchedule(BaseModel):
     action_params: dict[str, Any] | None
     priority: int
     is_enabled: bool
+    last_executed_at: datetime | None
     created_at: datetime
 
     class Config:

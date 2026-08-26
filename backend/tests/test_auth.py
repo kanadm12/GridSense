@@ -4,16 +4,20 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from slowapi import Limiter
 
 from app.main import app
 from app.database import get_db
 from app.models.base import Base
+from importlib import import_module
+import_module("app.models")
 
 
-# Test database setup
-SQLALCHEMY_TEST_DATABASE_URL = "sqlite:///:memory:"
+# Test database setup - use shared in-memory DB so multiple connections see same data
+SQLALCHEMY_TEST_DATABASE_URL = "sqlite:///file:tests_db?mode=memory&cache=shared"
 engine = create_engine(
-    SQLALCHEMY_TEST_DATABASE_URL, connect_args={"check_same_thread": False}
+    SQLALCHEMY_TEST_DATABASE_URL,
+    connect_args={"check_same_thread": False, "uri": True},
 )
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
@@ -30,6 +34,7 @@ def override_get_db():
 @pytest.fixture(autouse=True)
 def setup_database():
     """Create test database tables before each test."""
+    # Ensure models are imported and tables are created on the test engine
     Base.metadata.create_all(bind=engine)
     yield
     Base.metadata.drop_all(bind=engine)
@@ -38,7 +43,20 @@ def setup_database():
 @pytest.fixture
 def client():
     """Create test client with overridden database."""
+    # Disable rate limiting for tests
+    app.state.limiter = Limiter(key_func=lambda req: "test", default_limits=[])
+
+    # Register override for any module-level `get_db` reference to ensure coverage
     app.dependency_overrides[get_db] = override_get_db
+    import sys
+
+    for mod in list(sys.modules.values()):
+        try:
+            candidate = getattr(mod, "get_db", None)
+            if callable(candidate):
+                app.dependency_overrides[candidate] = override_get_db
+        except Exception:
+            continue
     with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.clear()

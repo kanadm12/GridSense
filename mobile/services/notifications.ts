@@ -52,7 +52,7 @@ export async function registerForPushNotifications(): Promise<string | null> {
 
     // Register token with backend
     const platform = Platform.OS === 'ios' ? 'ios' : 'android';
-    await api.post('/notifications/register', {
+    await api.post('/notifications/register-token', {
       token: tokenData.data,
       platform,
     });
@@ -70,7 +70,14 @@ export async function registerForPushNotifications(): Promise<string | null> {
  */
 export async function unregisterPushNotifications(): Promise<void> {
   try {
-    await api.delete('/notifications/register');
+    const token = await Notifications.getExpoPushTokenAsync({
+      projectId: Constants.expoConfig?.extra?.eas?.projectId,
+    });
+    const platform = Platform.OS === 'ios' ? 'ios' : 'android';
+    await api.post('/notifications/unregister-token', {
+      token: token.data,
+      platform,
+    });
   } catch (error) {
     console.error('Failed to unregister push token:', error);
   }
@@ -147,9 +154,9 @@ export async function schedulePeakHourReminder(): Promise<void> {
       data: { type: 'peak_warning' },
     },
     trigger: {
+      type: Notifications.SchedulableTriggerInputTypes.DAILY,
       hour: 14,
       minute: 45,
-      repeats: true,
     },
   });
 }
@@ -166,20 +173,22 @@ export async function scheduleWeeklySummary(): Promise<void> {
       data: { type: 'weekly_summary' },
     },
     trigger: {
+      type: Notifications.SchedulableTriggerInputTypes.WEEKLY,
       weekday: 1, // Sunday
       hour: 9,
       minute: 0,
-      repeats: true,
     },
   });
 }
 
 // Types for notification data
 export interface NotificationPreferences {
+  anomalyAlerts: boolean;
+  forecastUpdates: boolean;
+  recommendations: boolean;
   peakAlerts: boolean;
   weeklySummary: boolean;
   savingsTips: boolean;
-  priceAlerts: boolean;
 }
 
 /**
@@ -189,18 +198,22 @@ export async function getNotificationPreferences(): Promise<NotificationPreferen
   try {
     const response = await api.get('/notifications/preferences');
     return {
+      anomalyAlerts: response.data.anomaly_alerts,
+      forecastUpdates: response.data.forecast_updates,
+      recommendations: response.data.recommendations,
       peakAlerts: response.data.peak_alerts,
       weeklySummary: response.data.weekly_summary,
       savingsTips: response.data.savings_tips,
-      priceAlerts: response.data.price_alerts,
     };
   } catch {
     // Return defaults if failed
     return {
+      anomalyAlerts: true,
+      forecastUpdates: true,
+      recommendations: true,
       peakAlerts: true,
       weeklySummary: true,
       savingsTips: true,
-      priceAlerts: false,
     };
   }
 }
@@ -212,10 +225,12 @@ export async function updateNotificationPreferences(
   prefs: NotificationPreferences
 ): Promise<void> {
   await api.put('/notifications/preferences', {
+    anomaly_alerts: prefs.anomalyAlerts,
+    forecast_updates: prefs.forecastUpdates,
+    recommendations: prefs.recommendations,
     peak_alerts: prefs.peakAlerts,
     weekly_summary: prefs.weeklySummary,
     savings_tips: prefs.savingsTips,
-    price_alerts: prefs.priceAlerts,
   });
 
   // Update scheduled notifications based on preferences

@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
+from app.api.ownership import verify_meter_ownership
 from app.database import get_db
 from app.models.meter import Meter
 from app.models.user import User
@@ -29,18 +30,7 @@ async def get_meter(
     current_user: User = Depends(get_current_user),
 ) -> MeterResponse:
     """Get a specific meter by ID."""
-    meter = (
-        db.query(Meter)
-        .filter(Meter.id == meter_id, Meter.user_id == current_user.id)
-        .first()
-    )
-
-    if not meter:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Meter not found",
-        )
-
+    meter = verify_meter_ownership(db, meter_id, current_user.id)
     return meter
 
 
@@ -75,17 +65,7 @@ async def delete_meter(
     current_user: User = Depends(get_current_user),
 ) -> None:
     """Delete a meter and all its readings."""
-    meter = (
-        db.query(Meter)
-        .filter(Meter.id == meter_id, Meter.user_id == current_user.id)
-        .first()
-    )
-
-    if not meter:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Meter not found",
-        )
+    meter = verify_meter_ownership(db, meter_id, current_user.id)
 
     db.delete(meter)
     db.commit()

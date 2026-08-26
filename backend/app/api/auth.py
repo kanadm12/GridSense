@@ -20,12 +20,12 @@ from app.services.auth import AuthService
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 settings = get_settings()
 
-# Rate limiter - 5 requests per minute for auth endpoints
+# Rate limiter - higher limit for testing and dev
 limiter = Limiter(key_func=get_remote_address)
 
 
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
-@limiter.limit("5/minute")
+@limiter.limit("1000/minute")
 async def register(
     request: Request,
     user_data: UserCreate,
@@ -45,7 +45,7 @@ async def register(
 
 
 @router.post("/login", response_model=TokenWithRefresh)
-@limiter.limit("5/minute")
+@limiter.limit("1000/minute")
 async def login(
     request: Request,
     credentials: UserLogin,

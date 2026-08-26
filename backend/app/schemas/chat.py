@@ -26,11 +26,13 @@ class ChatRequest(BaseModel):
     message: str = Field(..., min_length=1, max_length=2000)
     conversation_history: list[ChatMessage] | None = None
     meter_id: int | None = Field(None, description="Specific meter to analyze")
+    session_id: int | None = Field(None, description="Existing chat session")
 
 
 class ChatResponse(BaseModel):
     """Response from the AI assistant."""
     message: str
+    session_id: int | None = None
     suggestions: list[str] | None = None
     data_referenced: bool = False
     timestamp: datetime = Field(default_factory=datetime.now)

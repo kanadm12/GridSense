@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -10,6 +10,7 @@ import {
   Platform,
 } from 'react-native';
 import { router } from 'expo-router';
+import * as Linking from 'expo-linking';
 import { Colors, Spacing, BorderRadius, FontSize, FontWeight } from '@/constants/theme';
 import { Ionicons } from '@expo/vector-icons';
 import api from '@/services/api';
@@ -24,6 +25,26 @@ export default function ForgotPasswordScreen() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+
+  useEffect(() => {
+    const applyResetLink = (url: string) => {
+      const parsed = Linking.parse(url);
+      const resetToken = parsed.queryParams?.token;
+      if (typeof resetToken === 'string' && resetToken.length > 0) {
+        setToken(resetToken);
+        setState('reset');
+      }
+    };
+
+    Linking.getInitialURL().then((url) => {
+      if (url) {
+        applyResetLink(url);
+      }
+    });
+
+    const subscription = Linking.addEventListener('url', ({ url }) => applyResetLink(url));
+    return () => subscription.remove();
+  }, []);
 
   const handleRequestReset = async () => {
     if (!email) {

@@ -3,10 +3,12 @@
 from datetime import datetime, timedelta
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
+from app.rate_limit import limiter
+from app.api.ownership import verify_device_ownership, verify_rule_ownership, verify_schedule_ownership
 from app.database import get_db
 from app.models.automation import (
     SmartDevice as SmartDeviceModel,
@@ -16,6 +18,8 @@ from app.models.automation import (
     AutomationTrigger,
 )
 from app.models.user import User
+from app.config import get_settings
+from app.services.automation_provider import AutomationProviderError, get_automation_provider
 from app.schemas.automation import (
     SmartDevice,
     SmartDeviceCreate,
@@ -74,6 +78,9 @@ async def create_device(
         device_type=device_type,
         brand=device.brand,
         model=device.model,
+        integration_type=device.integration_type,
+        device_id=device.device_id,
+        api_endpoint=device.api_endpoint,
         power_rating_watts=device.power_rating_watts,
         standby_watts=device.standby_watts,
         location=device.location,
@@ -92,19 +99,7 @@ async def get_device(
     current_user: User = Depends(get_current_user),
 ) -> SmartDevice:
     """Get a specific smart device."""
-    device = (
-        db.query(SmartDeviceModel)
-        .filter(
-            SmartDeviceModel.id == device_id,
-            SmartDeviceModel.user_id == current_user.id,
-        )
-        .first()
-    )
-    if not device:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Device not found",
-        )
+    device = verify_device_ownership(db, device_id, current_user.id)
     return device
 
 
@@ -116,19 +111,7 @@ async def update_device(
     current_user: User = Depends(get_current_user),
 ) -> SmartDevice:
     """Update a smart device."""
-    device = (
-        db.query(SmartDeviceModel)
-        .filter(
-            SmartDeviceModel.id == device_id,
-            SmartDeviceModel.user_id == current_user.id,
-        )
-        .first()
-    )
-    if not device:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Device not found",
-        )
+    device = verify_device_ownership(db, device_id, current_user.id)
 
     update_data = update.model_dump(exclude_unset=True)
     for field, value in update_data.items():
@@ -146,45 +129,22 @@ async def delete_device(
     current_user: User = Depends(get_current_user),
 ) -> None:
     """Delete a smart device and all its automations."""
-    device = (
-        db.query(SmartDeviceModel)
-        .filter(
-            SmartDeviceModel.id == device_id,
-            SmartDeviceModel.user_id == current_user.id,
-        )
-        .first()
-    )
-    if not device:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Device not found",
-        )
-
+    device = verify_device_ownership(db, device_id, current_user.id)
     db.delete(device)
     db.commit()
 
 
 @router.post("/devices/{device_id}/command", response_model=DeviceCommandResponse)
+@limiter.limit("10/minute")
 async def send_device_command(
+    request: Request,
     device_id: int,
     command: DeviceCommand,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> DeviceCommandResponse:
     """Send a command to a smart device."""
-    device = (
-        db.query(SmartDeviceModel)
-        .filter(
-            SmartDeviceModel.id == device_id,
-            SmartDeviceModel.user_id == current_user.id,
-        )
-        .first()
-    )
-    if not device:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Device not found",
-        )
+    device = verify_device_ownership(db, device_id, current_user.id)
 
     if not device.is_controllable:
         raise HTTPException(
@@ -192,17 +152,11 @@ async def send_device_command(
             detail="Device is not controllable",
         )
 
-    # Simulate device control (in real implementation, would call device API)
-    new_state = device.current_state or {}
-    
-    if command.command == "on":
-        new_state["power"] = "on"
-    elif command.command == "off":
-        new_state["power"] = "off"
-    elif command.command == "set_temp" and command.params:
-        new_state["temperature"] = command.params.get("temperature")
-    elif command.command == "set_mode" and command.params:
-        new_state["mode"] = command.params.get("mode")
+    try:
+        provider = get_automation_provider(device, get_settings())
+        new_state = await provider.execute(device, command.command, command.params)
+    except AutomationProviderError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     device.current_state = new_state
     device.last_seen = datetime.utcnow()
@@ -244,19 +198,7 @@ async def create_automation(
 ) -> Automation:
     """Create a new automation rule."""
     # Verify device belongs to user
-    device = (
-        db.query(SmartDeviceModel)
-        .filter(
-            SmartDeviceModel.id == automation.device_id,
-            SmartDeviceModel.user_id == current_user.id,
-        )
-        .first()
-    )
-    if not device:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Device not found",
-        )
+    device = verify_device_ownership(db, automation.device_id, current_user.id)
 
     # Validate trigger type
     try:
@@ -290,28 +232,32 @@ async def update_automation(
     current_user: User = Depends(get_current_user),
 ) -> Automation:
     """Update an automation rule."""
-    automation = (
-        db.query(AutomationModel)
-        .join(SmartDeviceModel)
-        .filter(
-            AutomationModel.id == rule_id,
-            SmartDeviceModel.user_id == current_user.id,
-        )
-        .first()
-    )
-    if not automation:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Automation rule not found",
-        )
+    rule = verify_rule_ownership(db, rule_id, current_user.id)
 
     update_data = update.model_dump(exclude_unset=True)
     for field, value in update_data.items():
-        setattr(automation, field, value)
+        setattr(rule, field, value)
 
     db.commit()
-    db.refresh(automation)
-    return automation
+    db.refresh(rule)
+    return rule
+
+
+@router.post("/rules/{rule_id}/run")
+async def run_automation_rule(
+    rule_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict[str, str]:
+    """Queue an authenticated manual execution of an automation rule."""
+    rule = verify_rule_ownership(db, rule_id, current_user.id)
+    try:
+        from app.tasks import enqueue_automation_rule
+
+        job_id = enqueue_automation_rule(rule_id)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Automation worker unavailable") from exc
+    return {"job_id": job_id, "status": "queued"}
 
 
 @router.delete("/rules/{rule_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -321,22 +267,8 @@ async def delete_automation(
     current_user: User = Depends(get_current_user),
 ) -> None:
     """Delete an automation rule."""
-    automation = (
-        db.query(AutomationModel)
-        .join(SmartDeviceModel)
-        .filter(
-            AutomationModel.id == rule_id,
-            SmartDeviceModel.user_id == current_user.id,
-        )
-        .first()
-    )
-    if not automation:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Automation rule not found",
-        )
-
-    db.delete(automation)
+    rule = verify_rule_ownership(db, rule_id, current_user.id)
+    db.delete(rule)
     db.commit()
 
 
@@ -369,19 +301,7 @@ async def create_schedule(
 ) -> DeviceSchedule:
     """Create a new device schedule."""
     # Verify device belongs to user
-    device = (
-        db.query(SmartDeviceModel)
-        .filter(
-            SmartDeviceModel.id == schedule.device_id,
-            SmartDeviceModel.user_id == current_user.id,
-        )
-        .first()
-    )
-    if not device:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Device not found",
-        )
+    device = verify_device_ownership(db, schedule.device_id, current_user.id)
 
     db_schedule = DeviceScheduleModel(
         device_id=schedule.device_id,
@@ -407,21 +327,7 @@ async def delete_schedule(
     current_user: User = Depends(get_current_user),
 ) -> None:
     """Delete a device schedule."""
-    schedule = (
-        db.query(DeviceScheduleModel)
-        .join(SmartDeviceModel)
-        .filter(
-            DeviceScheduleModel.id == schedule_id,
-            SmartDeviceModel.user_id == current_user.id,
-        )
-        .first()
-    )
-    if not schedule:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Schedule not found",
-        )
-
+    schedule = verify_schedule_ownership(db, schedule_id, current_user.id)
     db.delete(schedule)
     db.commit()
 

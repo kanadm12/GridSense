@@ -92,6 +92,7 @@ class Automation(Base):
     
     # State
     is_enabled = Column(Boolean, default=True)
+    last_executed_at = Column(DateTime, nullable=True)
     last_triggered = Column(DateTime, nullable=True)
     trigger_count = Column(Integer, default=0)
     

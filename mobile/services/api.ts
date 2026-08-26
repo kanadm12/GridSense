@@ -9,8 +9,11 @@ import Constants from 'expo-constants';
 // Configuration - use device's localhost for simulators, or computer's IP for physical devices
 const getApiUrl = () => {
   // Check if running on web
-  if (typeof window !== 'undefined' && window.location) {
-    return `http://${window.location.hostname}:8000/api/v1`;
+  const runtimeWindow = (globalThis as {
+    window?: { location?: { hostname?: string } };
+  }).window;
+  if (runtimeWindow?.location?.hostname) {
+    return `http://${runtimeWindow.location.hostname}:8000/api/v1`;
   }
   // For Expo Go on physical device, use the computer's IP
   const debuggerHost = Constants.expoConfig?.hostUri || Constants.manifest2?.extra?.expoGo?.debuggerHost;

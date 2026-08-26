@@ -3,14 +3,18 @@
 from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
+from app.rate_limit import limiter
+from app.api.ownership import verify_meter_ownership
 from app.database import get_db
+from app.models.meter import Meter
 from app.models.user import User
 from app.schemas.chat import ChatRequest, ChatResponse, ChatWelcome, QuickAction
 from app.services.ai_assistant import get_ai_assistant
+from app.services.chat_service import ChatService
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -62,8 +66,10 @@ async def get_welcome(
 
 
 @router.post("/message", response_model=ChatResponse)
+@limiter.limit("20/minute")
 async def send_message(
-    request: ChatRequest,
+    request: Request,
+    payload: ChatRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> ChatResponse:
@@ -74,21 +80,44 @@ async def send_message(
     - User's actual usage data for personalized responses
     """
     assistant = get_ai_assistant(db)
+    chat_service = ChatService(db)
+
+    if payload.meter_id is not None:
+        verify_meter_ownership(db, payload.meter_id, current_user.id)
+
+    session = None
+    if payload.session_id is not None:
+        session = chat_service.get_session(payload.session_id, current_user.id)
+        if session is None:
+            raise HTTPException(status_code=404, detail="Chat session not found")
+    else:
+        session = chat_service.create_session(
+            user_id=current_user.id,
+            meter_id=payload.meter_id,
+            title=payload.message[:80],
+        )
 
     # Convert conversation history to dict format
     history = None
-    if request.conversation_history:
+    if payload.conversation_history:
         history = [
             {"role": msg.role.value, "content": msg.content}
-            for msg in request.conversation_history
+            for msg in payload.conversation_history
         ]
+    elif session:
+        history = [
+            {"role": message.role, "content": message.content}
+            for message in chat_service.get_session_messages(session.id, current_user.id)
+        ]
+
+    chat_service.add_message(session.id, "user", payload.message)
 
     try:
         response_text = await assistant.chat(
             user_id=current_user.id,
-            message=request.message,
+            message=payload.message,
             conversation_history=history,
-            meter_id=request.meter_id,
+            meter_id=payload.meter_id,
         )
 
         # Check if response references user data
@@ -110,13 +139,17 @@ async def send_message(
         if "save" in response_lower or "reduce" in response_lower:
             suggestions.append("Set up an automation to help me save")
 
+        chat_service.add_message(session.id, "assistant", response_text)
+
         return ChatResponse(
             message=response_text,
+            session_id=session.id,
             suggestions=suggestions[:3] if suggestions else None,
             data_referenced=data_referenced,
         )
 
     except Exception as e:
+        db.rollback()
         raise HTTPException(
             status_code=500,
             detail=f"Failed to process message: {str(e)}"
@@ -125,17 +158,33 @@ async def send_message(
 
 @router.get("/history")
 async def get_chat_history(
+    session_id: int | None = None,
     limit: int = 50,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
-    """Get recent chat history for the user.
-    
-    Note: Currently returns empty as chat history is managed client-side.
-    Future: Store and retrieve conversation history from database.
-    """
-    # TODO: Implement server-side chat history storage
+    """Get recent persisted chat history for the user."""
+    chat_service = ChatService(db)
+    if session_id is not None:
+        session = chat_service.get_session(session_id, current_user.id)
+        if session is None:
+            raise HTTPException(status_code=404, detail="Chat session not found")
+        messages = chat_service.get_session_messages(session_id, current_user.id)
+    else:
+        sessions = chat_service.list_sessions(current_user.id, limit=limit, offset=0)
+        messages = [message for session in sessions for message in session.messages]
+
+    messages = messages[-limit:]
     return {
-        "messages": [],
-        "has_more": False,
+        "messages": [
+            {
+                "id": message.id,
+                "session_id": message.session_id,
+                "role": message.role,
+                "content": message.content,
+                "timestamp": message.created_at,
+            }
+            for message in messages
+        ],
+        "has_more": len(messages) == limit,
     }

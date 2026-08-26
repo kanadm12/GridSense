@@ -1,5 +1,7 @@
 """Authentication dependencies."""
 
+from typing import Optional
+
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
@@ -8,14 +10,20 @@ from app.database import get_db
 from app.models.user import User
 from app.services.auth import AuthService
 
-security = HTTPBearer()
+security = HTTPBearer(auto_error=False)
 
 
 async def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
     db: Session = Depends(get_db),
 ) -> User:
     """Get the current authenticated user from JWT token."""
+    if credentials is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not authenticated",
+        )
+
     token = credentials.credentials
     token_data = AuthService.decode_token(token)
 

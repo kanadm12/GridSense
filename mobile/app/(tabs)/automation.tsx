@@ -18,7 +18,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import { api, getErrorMessage } from '../../services/api';
+import api, { getErrorMessage } from '../../services/api';
 
 interface SmartDevice {
   id: number;
@@ -92,6 +92,8 @@ export default function AutomationScreen() {
   const [newDevice, setNewDevice] = useState({
     name: '',
     device_type: 'smart_plug',
+    integration_type: 'simulator',
+    device_id: '',
     location: '',
     power_rating_watts: '',
   });
@@ -145,6 +147,15 @@ export default function AutomationScreen() {
     }
   };
 
+  const runAutomation = async (automation: Automation) => {
+    try {
+      const response = await api.post(`/automation/rules/${automation.id}/run`);
+      Alert.alert('Automation Queued', `Job ${response.data.job_id} was sent to the worker.`);
+    } catch (error) {
+      Alert.alert('Automation Failed', getErrorMessage(error));
+    }
+  };
+
   const addDevice = async () => {
     if (!newDevice.name.trim()) {
       Alert.alert('Validation Error', 'Please enter a device name');
@@ -155,13 +166,22 @@ export default function AutomationScreen() {
       await api.post('/automation/devices', {
         name: newDevice.name,
         device_type: newDevice.device_type,
+        integration_type: newDevice.integration_type,
+        device_id: newDevice.device_id || null,
         location: newDevice.location || null,
         power_rating_watts: newDevice.power_rating_watts
           ? parseFloat(newDevice.power_rating_watts)
           : null,
       });
       setShowAddDevice(false);
-      setNewDevice({ name: '', device_type: 'smart_plug', location: '', power_rating_watts: '' });
+      setNewDevice({
+        name: '',
+        device_type: 'smart_plug',
+        integration_type: 'simulator',
+        device_id: '',
+        location: '',
+        power_rating_watts: '',
+      });
       Alert.alert('Success', 'Device added successfully');
       fetchData();
     } catch (error) {
@@ -346,6 +366,13 @@ export default function AutomationScreen() {
                       Est. savings: ${automation.estimated_savings_dollars.toFixed(2)}/month
                     </Text>
                   )}
+                  <TouchableOpacity
+                    style={styles.runButton}
+                    onPress={() => runAutomation(automation)}
+                  >
+                    <Ionicons name="play" size={14} color="#2563EB" />
+                    <Text style={styles.runButtonText}>Run now</Text>
+                  </TouchableOpacity>
                 </View>
                 <Switch
                   value={automation.is_enabled}
@@ -441,6 +468,24 @@ export default function AutomationScreen() {
               value={newDevice.location}
               onChangeText={(text) => setNewDevice({ ...newDevice, location: text })}
             />
+
+            <TextInput
+              style={styles.input}
+              placeholder="Integration (simulator or home_assistant)"
+              value={newDevice.integration_type}
+              autoCapitalize="none"
+              onChangeText={(text) => setNewDevice({ ...newDevice, integration_type: text })}
+            />
+
+            {newDevice.integration_type === 'home_assistant' && (
+              <TextInput
+                style={styles.input}
+                placeholder="Home Assistant entity ID (e.g., switch.lounge)"
+                value={newDevice.device_id}
+                autoCapitalize="none"
+                onChangeText={(text) => setNewDevice({ ...newDevice, device_id: text })}
+              />
+            )}
 
             <TextInput
               style={styles.input}
@@ -633,6 +678,22 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#10B981',
     marginTop: 4,
+  },
+  runButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    marginTop: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 6,
+    backgroundColor: '#DBEAFE',
+  },
+  runButtonText: {
+    color: '#2563EB',
+    fontWeight: '600',
+    fontSize: 12,
+    marginLeft: 4,
   },
   suggestionCard: {
     backgroundColor: '#FFF',

@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
+from app.api.ownership import verify_meter_ownership
 from app.database import get_db
 from app.models.meter import Meter
 from app.models.user import User
@@ -24,18 +25,7 @@ async def get_recommendations(
     Analyzes usage patterns and provides actionable recommendations
     to reduce energy costs and improve efficiency.
     """
-    # Verify meter ownership
-    meter = (
-        db.query(Meter)
-        .filter(Meter.id == meter_id, Meter.user_id == current_user.id)
-        .first()
-    )
-
-    if not meter:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Meter not found",
-        )
+    verify_meter_ownership(db, meter_id, current_user.id)
 
     engine = RecommendationEngine(db)
     return engine.generate_recommendations(meter_id)

@@ -1,15 +1,21 @@
 """NEM12 file upload endpoints."""
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status, BackgroundTasks
+import hashlib
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
+from app.rate_limit import limiter
 from app.database import get_db
 from app.models.meter import Meter
 from app.models.reading import Reading
 from app.models.user import User
 from app.services.nem12_parser import NEM12Parser
+from app.services.nem12_importer import NEM12Importer
+from app.models.upload import NEM12Upload
+from app.schemas.reading import ReadingBulkCreate
+from typing import Optional
 
 router = APIRouter(prefix="/upload", tags=["Upload"])
 
@@ -25,12 +31,20 @@ class UploadResponse(BaseModel):
     errors: list[str]
 
 
-@router.post("", response_model=UploadResponse)
+class UploadAccepted(BaseModel):
+    upload_id: int
+    message: str
+
+
+@router.post("", response_model=UploadAccepted)
+@limiter.limit("5/minute")
 async def upload_nem12(
+    request: Request,
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
-) -> UploadResponse:
+) -> UploadAccepted:
     """Upload and process a NEM12 file.
 
     The file should be a valid NEM12 format CSV file from your energy retailer
@@ -70,92 +84,68 @@ async def upload_nem12(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Invalid NEM12 file: {error_msg}",
         )
+    # Compute file hash for deduplication
+    file_hash = hashlib.sha256(content).hexdigest()
 
-    # Parse the file
-    parser = NEM12Parser()
-    result = parser.parse(content)
-
-    if result.errors and not result.meters:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Failed to parse NEM12 file: {'; '.join(result.errors[:5])}",
-        )
-
-    meters_created = 0
-    meters_updated = 0
-    readings_imported = 0
-
-    # Process each meter found in the file
-    for meter_data in result.meters:
-        # Find or create meter
-        existing_meter = (
-            db.query(Meter)
-            .filter(
-                Meter.user_id == current_user.id,
-                Meter.nmi == meter_data.nmi,
-                Meter.suffix == meter_data.suffix,
-            )
-            .first()
-        )
-
-        if existing_meter:
-            meter = existing_meter
-            meters_updated += 1
-        else:
-            meter = Meter(
-                user_id=current_user.id,
-                nmi=meter_data.nmi,
-                meter_serial=meter_data.meter_serial,
-                suffix=meter_data.suffix,
-                unit_of_measure=meter_data.unit_of_measure,
-                interval_minutes=meter_data.interval_minutes,
-                state="VIC",  # Default to Victoria
-                name=f"Meter {meter_data.nmi[-4:]}",  # Last 4 digits as default name
-            )
-            db.add(meter)
-            db.flush()  # Get the meter ID
-            meters_created += 1
-
-        # Determine register type - default to B (consumption/import) for household meters
-        # Only treat as export if suffix explicitly contains "export" or is B-type
-        suffix_lower = (meter_data.suffix or "").lower()
-        register_type = "E" if "export" in suffix_lower else "B"
-
-        # Import readings (bulk insert for efficiency)
-        readings_to_add = []
-        for reading_data in meter_data.readings:
-            # Check for duplicate timestamp
-            existing = (
-                db.query(Reading)
-                .filter(
-                    Reading.meter_id == meter.id,
-                    Reading.timestamp == reading_data.timestamp,
-                )
-                .first()
-            )
-
-            if not existing:
-                readings_to_add.append(
-                    Reading(
-                        meter_id=meter.id,
-                        timestamp=reading_data.timestamp,
-                        value=reading_data.value,
-                        quality=reading_data.quality,
-                        register_type=register_type,
-                    )
-                )
-
-        if readings_to_add:
-            db.bulk_save_objects(readings_to_add)
-            readings_imported += len(readings_to_add)
-
-    db.commit()
-
-    return UploadResponse(
-        message="NEM12 file processed successfully",
-        meters_created=meters_created,
-        meters_updated=meters_updated,
-        readings_imported=readings_imported,
-        warnings=result.warnings[:10],  # Limit warnings returned
-        errors=result.errors[:10],  # Limit errors returned
+    # If this exact file was already imported for this user, return existing upload
+    existing = (
+        db.query(NEM12Upload)
+        .filter(NEM12Upload.user_id == current_user.id, NEM12Upload.file_hash == file_hash, NEM12Upload.status == "completed")
+        .first()
     )
+    if existing:
+        return UploadAccepted(upload_id=existing.id, message="File already imported previously")
+
+    # Create upload record in DB (pending) and schedule background import
+    upload = NEM12Upload(user_id=current_user.id, filename=file.filename, status="pending", file_hash=file_hash)
+    db.add(upload)
+    db.commit()
+    db.refresh(upload)
+
+    importer = NEM12Importer()
+
+    # Try to enqueue via RQ; if Redis isn't available, fallback to BackgroundTasks
+    try:
+        from app.tasks import enqueue_import
+
+        job_id = enqueue_import(content, current_user.id, file.filename, upload.id)
+        # store job id on upload for tracking
+        upload.rq_job_id = job_id
+        db.add(upload)
+        db.commit()
+    except Exception:
+        # fallback to in-process background task
+        background_tasks.add_task(importer.import_file, db, current_user.id, content, file.filename, upload.id)
+
+    return UploadAccepted(upload_id=upload.id, message="Upload accepted and processing started")
+
+
+@router.get("/{upload_id}")
+async def get_upload_status(upload_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> dict:
+    """Get the status of a previously uploaded NEM12 file."""
+    upload = db.query(NEM12Upload).filter(NEM12Upload.id == upload_id, NEM12Upload.user_id == current_user.id).first()
+    if not upload:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Upload not found")
+
+    # Attempt to fetch job status from Redis if present
+    job_id: Optional[str] = getattr(upload, "rq_job_id", None)
+    job_status: Optional[str] = None
+    if job_id:
+        try:
+            from app.tasks import get_job_status
+
+            job_status = get_job_status(job_id)
+        except Exception:
+            job_status = None
+
+    return {
+        "id": upload.id,
+        "status": upload.status,
+        "progress_percent": upload.progress_percent or 0,
+        "rq_job_id": job_id,
+        "rq_job_status": job_status,
+        "total_readings": upload.total_readings,
+        "errors": (upload.errors or "").split("\n") if upload.errors else [],
+        "warnings": (upload.warnings or "").split("\n") if upload.warnings else [],
+        "processed_at": upload.processed_at,
+    }
