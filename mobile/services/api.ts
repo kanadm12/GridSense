@@ -4,7 +4,9 @@
 
 import axios, { AxiosInstance, AxiosError, InternalAxiosRequestConfig } from 'axios';
 import * as SecureStore from 'expo-secure-store';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import Constants from 'expo-constants';
+import { Platform } from 'react-native';
 
 // Configuration - use device's localhost for simulators, or computer's IP for physical devices
 const getApiUrl = () => {
@@ -28,6 +30,24 @@ const getApiUrl = () => {
 const API_URL = getApiUrl();
 const TOKEN_KEY = 'gridsense_token';
 const REFRESH_TOKEN_KEY = 'gridsense_refresh_token';
+
+/**
+ * Platform-aware token storage.
+ *
+ * expo-secure-store is a native module (iOS Keychain / Android Keystore) and
+ * has no web implementation — its methods are undefined on web, so any call
+ * throws "ExpoSecureStore.default.* is not a function". Web has no secure
+ * enclave, so fall back to AsyncStorage (localStorage-backed) there while
+ * keeping the real secure store on native.
+ */
+const secureStorage = {
+  getItem: (key: string): Promise<string | null> =>
+    Platform.OS === 'web' ? AsyncStorage.getItem(key) : SecureStore.getItemAsync(key),
+  setItem: (key: string, value: string): Promise<void> =>
+    Platform.OS === 'web' ? AsyncStorage.setItem(key, value) : SecureStore.setItemAsync(key, value),
+  removeItem: (key: string): Promise<void> =>
+    Platform.OS === 'web' ? AsyncStorage.removeItem(key) : SecureStore.deleteItemAsync(key),
+};
 
 // Types
 export interface User {
@@ -118,6 +138,25 @@ export interface UploadResponse {
   errors: string[];
 }
 
+/** POST /upload now returns immediately and processes in the background. */
+export interface UploadAccepted {
+  upload_id: number;
+  message: string;
+}
+
+export type UploadStatusValue = 'pending' | 'processing' | 'completed' | 'failed';
+
+/** Shape of GET /upload/{id} while/after the background import runs. */
+export interface UploadStatus {
+  id: number;
+  status: UploadStatusValue;
+  progress_percent: number;
+  total_readings: number | null;
+  errors: string[];
+  warnings: string[];
+  processed_at: string | null;
+}
+
 export interface AuthResponse {
   access_token: string;
   refresh_token: string;
@@ -173,7 +212,7 @@ const api: AxiosInstance = axios.create({
 // Request interceptor to add auth token
 api.interceptors.request.use(
   async (config: InternalAxiosRequestConfig) => {
-    const token = await SecureStore.getItemAsync(TOKEN_KEY);
+    const token = await secureStorage.getItem(TOKEN_KEY);
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
@@ -206,7 +245,7 @@ api.interceptors.response.use(
       isRefreshing = true;
 
       try {
-        const refreshToken = await SecureStore.getItemAsync(REFRESH_TOKEN_KEY);
+        const refreshToken = await secureStorage.getItem(REFRESH_TOKEN_KEY);
         if (!refreshToken) {
           throw new Error('No refresh token available');
         }
@@ -240,27 +279,27 @@ api.interceptors.response.use(
 
 // Token management
 export const setToken = async (token: string) => {
-  await SecureStore.setItemAsync(TOKEN_KEY, token);
+  await secureStorage.setItem(TOKEN_KEY, token);
 };
 
 export const getToken = async () => {
-  return SecureStore.getItemAsync(TOKEN_KEY);
+  return secureStorage.getItem(TOKEN_KEY);
 };
 
 export const removeToken = async () => {
-  await SecureStore.deleteItemAsync(TOKEN_KEY);
+  await secureStorage.removeItem(TOKEN_KEY);
 };
 
 export const setRefreshToken = async (token: string) => {
-  await SecureStore.setItemAsync(REFRESH_TOKEN_KEY, token);
+  await secureStorage.setItem(REFRESH_TOKEN_KEY, token);
 };
 
 export const getRefreshToken = async () => {
-  return SecureStore.getItemAsync(REFRESH_TOKEN_KEY);
+  return secureStorage.getItem(REFRESH_TOKEN_KEY);
 };
 
 export const removeRefreshToken = async () => {
-  await SecureStore.deleteItemAsync(REFRESH_TOKEN_KEY);
+  await secureStorage.removeItem(REFRESH_TOKEN_KEY);
 };
 
 // Auth API
@@ -327,19 +366,43 @@ export const metersApi = {
 
 // Upload API
 export const uploadApi = {
-  uploadNem12: async (fileUri: string, fileName: string) => {
+  uploadNem12: async (fileUri: string, fileName: string): Promise<UploadAccepted> => {
     const formData = new FormData();
+
+    if (Platform.OS === 'web') {
+      // On web, expo-document-picker gives a blob: URL. Fetch it into a real
+      // Blob so multipart carries the actual file bytes — appending a plain
+      // { uri, name, type } object (the React Native convention) would stringify
+      // to "[object Object]" and the server would reject it with HTTP 422.
+      const blob = await (await fetch(fileUri)).blob();
+      formData.append('file', blob, fileName);
+
+      // Setting Content-Type to undefined lets the browser generate the correct
+      // `multipart/form-data; boundary=...` header. Our axios instance defaults
+      // to application/json, which would otherwise break the upload.
+      const response = await api.post<UploadAccepted>('/upload', formData, {
+        headers: { 'Content-Type': undefined } as never,
+      });
+      return response.data;
+    }
+
+    // Native (iOS/Android): React Native's FormData accepts the file descriptor.
     formData.append('file', {
       uri: fileUri,
       name: fileName,
       type: 'text/csv',
     } as any);
 
-    const response = await api.post<UploadResponse>('/upload', formData, {
+    const response = await api.post<UploadAccepted>('/upload', formData, {
       headers: {
         'Content-Type': 'multipart/form-data',
       },
     });
+    return response.data;
+  },
+
+  getStatus: async (uploadId: number): Promise<UploadStatus> => {
+    const response = await api.get<UploadStatus>(`/upload/${uploadId}`);
     return response.data;
   },
 };

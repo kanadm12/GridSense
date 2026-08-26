@@ -61,6 +61,9 @@ yarn-debug.log*
 # ChromaDB vector store (can be regenerated)
 chroma_data/
 
+# Trained ML models (regenerated at runtime from meter data)
+*.pkl
+
 # Sample data files (optional - remove if you want to include)
 # sample_nem12_3months.csv
 yarn-error.log*

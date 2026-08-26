@@ -83,9 +83,13 @@ app.add_exception_handler(Exception, general_exception_handler)
 app.add_middleware(LoggingMiddleware)
 
 # CORS middleware
+# allow_origin_regex additionally permits any localhost/127.0.0.1 port so the
+# Expo web dev server (http://localhost:8081; the port can vary) can call the
+# API from a browser. Native apps don't enforce CORS, so this only affects web.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
+    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1):\d+",
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "Accept"],

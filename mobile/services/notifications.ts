@@ -22,6 +22,11 @@ Notifications.setNotificationHandler({
  * Register for push notifications and get the Expo push token
  */
 export async function registerForPushNotifications(): Promise<string | null> {
+  // Web push requires a configured VAPID key; skip on web to avoid noisy errors.
+  if (Platform.OS === 'web') {
+    return null;
+  }
+
   // Check if physical device (required for push)
   if (!Device.isDevice) {
     console.log('Push notifications require a physical device');
@@ -69,6 +74,9 @@ export async function registerForPushNotifications(): Promise<string | null> {
  * Unregister push notifications
  */
 export async function unregisterPushNotifications(): Promise<void> {
+  if (Platform.OS === 'web') {
+    return;
+  }
   try {
     const token = await Notifications.getExpoPushTokenAsync({
       projectId: Constants.expoConfig?.extra?.eas?.projectId,

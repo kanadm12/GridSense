@@ -9,7 +9,7 @@ import {
 } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import { router } from 'expo-router';
-import { uploadApi } from '@/services/api';
+import { uploadApi, UploadStatus } from '@/services/api';
 import { useMetersStore } from '@/stores';
 import { Colors, Spacing, BorderRadius, FontSize, FontWeight, Shadow } from '@/constants/theme';
 import { Ionicons } from '@expo/vector-icons';
@@ -20,7 +20,6 @@ export default function UploadScreen() {
   const [state, setState] = useState<UploadState>('idle');
   const [selectedFile, setSelectedFile] = useState<DocumentPicker.DocumentPickerAsset | null>(null);
   const [result, setResult] = useState<{
-    metersCreated: number;
     readingsImported: number;
     warnings: string[];
   } | null>(null);
@@ -45,6 +44,19 @@ export default function UploadScreen() {
     }
   };
 
+  // The backend imports asynchronously: POST /upload returns an upload_id and
+  // processes the file in the background. Poll its status until it finishes.
+  const pollUploadStatus = async (uploadId: number): Promise<UploadStatus> => {
+    for (let attempt = 0; attempt < 40; attempt++) {
+      const status = await uploadApi.getStatus(uploadId);
+      if (status.status === 'completed' || status.status === 'failed') {
+        return status;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+    }
+    throw new Error('Import is taking longer than expected. Please check back shortly.');
+  };
+
   const uploadFile = async () => {
     if (!selectedFile) return;
 
@@ -52,23 +64,29 @@ export default function UploadScreen() {
     setError(null);
 
     try {
-      const response = await uploadApi.uploadNem12(
+      const { upload_id } = await uploadApi.uploadNem12(
         selectedFile.uri,
         selectedFile.name || 'meter_data.csv'
       );
 
+      const final = await pollUploadStatus(upload_id);
+      if (final.status === 'failed') {
+        throw new Error(
+          final.errors?.[0] || 'The file could not be processed. Please check the format.'
+        );
+      }
+
       setResult({
-        metersCreated: response.meters_created,
-        readingsImported: response.readings_imported,
-        warnings: response.warnings,
+        readingsImported: final.total_readings ?? 0,
+        warnings: final.warnings ?? [],
       });
       setState('success');
 
-      // Refresh meters list
+      // Refresh meters list so the dashboard reflects the new data
       await fetchMeters();
     } catch (err: any) {
       const errorMessage =
-        err.response?.data?.detail || 'Failed to upload file. Please try again.';
+        err.response?.data?.detail || err.message || 'Failed to upload file. Please try again.';
       setError(errorMessage);
       setState('error');
     }
@@ -175,10 +193,6 @@ export default function UploadScreen() {
             <Text style={styles.successTitle}>Upload Complete!</Text>
 
             <View style={styles.resultCard}>
-              <View style={styles.resultRow}>
-                <Text style={styles.resultLabel}>Meters Added</Text>
-                <Text style={styles.resultValue}>{result.metersCreated}</Text>
-              </View>
               <View style={styles.resultRow}>
                 <Text style={styles.resultLabel}>Readings Imported</Text>
                 <Text style={styles.resultValue}>
