@@ -8,48 +8,34 @@ from sqlalchemy.orm import Session
 
 from app.models.meter import Meter
 from app.models.reading import Reading
+from app.services.tariff import (
+    DEFAULT_SUPPLY_CHARGE,
+    DEFAULT_TOU_RATES,
+    classify_tou_period,
+)
 
 
 class BillForecaster:
     """Forecasts end-of-month bill based on usage patterns."""
 
-    # Victorian TOU rates (typical)
-    RATES = {
-        "peak": 0.38,      # $/kWh 3pm-9pm weekdays
-        "shoulder": 0.25,  # $/kWh 7am-3pm, 9pm-10pm weekdays
-        "off_peak": 0.18,  # $/kWh 10pm-7am, weekends
-    }
-    DAILY_SUPPLY_CHARGE = 1.20  # $/day
+    # Victorian TOU rates and supply charge, sourced from the shared tariff module so
+    # every feature prices intervals identically.
+    RATES = DEFAULT_TOU_RATES
+    DAILY_SUPPLY_CHARGE = DEFAULT_SUPPLY_CHARGE  # $/day
 
     def __init__(self, db: Session):
         """Initialize the forecaster with database session."""
         self.db = db
 
-    def _get_tou_period(self, hour: int, weekday: int) -> str:
-        """Determine TOU period for a given hour and weekday."""
-        is_weekend = weekday >= 5
-        
-        if is_weekend:
-            return "off_peak"
-        
-        if 15 <= hour < 21:  # 3pm - 9pm
-            return "peak"
-        elif (7 <= hour < 15) or (21 <= hour < 22):  # 7am-3pm, 9pm-10pm
-            return "shoulder"
-        else:  # 10pm - 7am
-            return "off_peak"
-
     def _calculate_daily_cost(self, readings: list[Reading]) -> float:
         """Calculate cost for a day's readings."""
         total_cost = 0.0
-        
+
         for reading in readings:
             if reading.timestamp:
-                hour = reading.timestamp.hour
-                weekday = reading.timestamp.weekday()
-                tou = self._get_tou_period(hour, weekday)
-                total_cost += reading.kwh * self.RATES[tou]
-        
+                period = classify_tou_period(reading.timestamp)
+                total_cost += reading.value * self.RATES[period]
+
         return total_cost + self.DAILY_SUPPLY_CHARGE
 
     def forecast_monthly_bill(
@@ -92,7 +78,7 @@ class BillForecaster:
         )
 
         # Calculate usage so far
-        usage_so_far = sum(r.kwh for r in readings_so_far)
+        usage_so_far = sum(r.value for r in readings_so_far)
         cost_so_far = 0.0
         
         # Group by day for cost calculation
@@ -119,7 +105,7 @@ class BillForecaster:
 
         # Calculate historical daily average
         if historical_readings:
-            historical_total = sum(r.kwh for r in historical_readings)
+            historical_total = sum(r.value for r in historical_readings)
             historical_days = 30
             historical_daily_avg = historical_total / historical_days
         else:
@@ -207,7 +193,7 @@ class BillForecaster:
             )
 
             if readings:
-                total_kwh = sum(r.kwh for r in readings)
+                total_kwh = sum(r.value for r in readings)
                 
                 # Group by day for cost calculation
                 from collections import defaultdict

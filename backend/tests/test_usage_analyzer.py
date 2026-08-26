@@ -20,6 +20,11 @@ engine = create_engine(
 )
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
+# Fixed reference dates for weekday-aware Time-of-Use assertions (AEST wall-clock).
+# Pinned so the tests are deterministic regardless of what day they run on.
+WEEKDAY_DATE = date(2024, 6, 5)  # Wednesday
+WEEKEND_DATE = date(2024, 6, 8)  # Saturday
+
 
 @pytest.fixture
 def db():
@@ -240,10 +245,10 @@ class TestUsageAnalyzerTOUBreakdown:
     """Tests for Time-of-Use breakdown calculations."""
 
     def test_tou_breakdown_peak_hours(self, db, test_meter):
-        """Test that peak hours (3pm-9pm) are categorized correctly."""
-        # Create readings only during peak hours
+        """Test that peak hours (3pm-9pm) on a weekday are categorized correctly."""
+        # Create readings only during peak hours (on a known weekday)
         readings = []
-        test_date = date.today() - timedelta(days=1)
+        test_date = WEEKDAY_DATE
         
         for hour in range(15, 21):  # 3pm to 9pm
             timestamp = datetime.combine(test_date, datetime.min.time().replace(hour=hour))
@@ -268,8 +273,8 @@ class TestUsageAnalyzerTOUBreakdown:
     def test_tou_breakdown_off_peak_hours(self, db, test_meter):
         """Test that off-peak hours (10pm-7am) are categorized correctly."""
         readings = []
-        test_date = date.today() - timedelta(days=1)
-        
+        test_date = WEEKDAY_DATE
+
         # Off-peak: 10pm-midnight and midnight-7am
         for hour in [22, 23, 0, 1, 2, 3, 4, 5, 6]:
             timestamp = datetime.combine(test_date, datetime.min.time().replace(hour=hour))
@@ -293,7 +298,7 @@ class TestUsageAnalyzerTOUBreakdown:
 
     def test_tou_breakdown_with_string_date(self, db, test_meter):
         """Test TOU breakdown handles string dates (from SQLite)."""
-        test_date = date.today() - timedelta(days=1)
+        test_date = WEEKDAY_DATE
         timestamp = datetime.combine(test_date, datetime.min.time().replace(hour=10))
         
         db.add(Reading(
@@ -308,8 +313,36 @@ class TestUsageAnalyzerTOUBreakdown:
         analyzer = UsageAnalyzer(db)
         # Pass string date like SQLite would return
         tou = analyzer._get_tou_breakdown(test_meter.id, str(test_date))
-        
+
         assert tou["shoulder"] == 1.0  # 10am is shoulder time
+
+    def test_tou_breakdown_weekend_is_off_peak(self, db, test_meter):
+        """Weekends are entirely off-peak under the Victorian ToU convention.
+
+        The same 3pm-9pm window that is 'peak' on a weekday must be classified as
+        off-peak on a Saturday/Sunday. This guards against the earlier hour-only logic
+        that ignored the day of week.
+        """
+        readings = []
+        for hour in range(15, 21):  # 3pm-9pm — would be peak on a weekday
+            timestamp = datetime.combine(WEEKEND_DATE, datetime.min.time().replace(hour=hour))
+            readings.append(Reading(
+                meter_id=test_meter.id,
+                timestamp=timestamp,
+                value=1.0,
+                quality="A",
+                register_type="B",
+            ))
+
+        db.add_all(readings)
+        db.commit()
+
+        analyzer = UsageAnalyzer(db)
+        tou = analyzer._get_tou_breakdown(test_meter.id, WEEKEND_DATE)
+
+        assert tou["off_peak"] == 6.0  # weekend afternoon is off-peak
+        assert tou["peak"] == 0.0
+        assert tou["shoulder"] == 0.0
 
 
 class TestBatchTOUBreakdown:

@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
+from app.api.ownership import verify_meter_ownership
 from app.database import get_db
 from app.models.meter import Meter
 from app.models.user import User
@@ -13,21 +14,6 @@ from app.schemas.usage import DailyUsage, HourlyUsage, UsageSummary, WeeklyUsage
 from app.services.usage_analyzer import UsageAnalyzer
 
 router = APIRouter(prefix="/usage", tags=["Usage"])
-
-
-def get_user_meter(db: Session, meter_id: int, user_id: int) -> Meter:
-    """Get a meter ensuring it belongs to the user."""
-    meter = (
-        db.query(Meter)
-        .filter(Meter.id == meter_id, Meter.user_id == user_id)
-        .first()
-    )
-    if not meter:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Meter not found",
-        )
-    return meter
 
 
 @router.get("/summary/{meter_id}", response_model=UsageSummary)
@@ -39,7 +25,7 @@ async def get_usage_summary(
     current_user: User = Depends(get_current_user),
 ) -> UsageSummary:
     """Get comprehensive usage summary for a meter."""
-    get_user_meter(db, meter_id, current_user.id)
+    verify_meter_ownership(db, meter_id, current_user.id)
 
     analyzer = UsageAnalyzer(db)
     summary = analyzer.get_usage_summary(meter_id, start_date, end_date)
@@ -63,7 +49,7 @@ async def get_daily_usage(
     current_user: User = Depends(get_current_user),
 ) -> list[DailyUsage]:
     """Get daily usage breakdown for a meter."""
-    get_user_meter(db, meter_id, current_user.id)
+    verify_meter_ownership(db, meter_id, current_user.id)
 
     analyzer = UsageAnalyzer(db)
     return analyzer.get_daily_usage(meter_id, start_date, end_date, limit)
@@ -82,7 +68,7 @@ async def get_hourly_usage(
     Returns the average consumption for each hour of the day (0-23),
     useful for identifying peak usage times.
     """
-    get_user_meter(db, meter_id, current_user.id)
+    verify_meter_ownership(db, meter_id, current_user.id)
 
     analyzer = UsageAnalyzer(db)
     return analyzer.get_hourly_usage(meter_id, start_date, end_date)
@@ -101,7 +87,7 @@ async def get_weekly_usage(
     Returns the average consumption for each day of the week,
     useful for identifying weekday vs weekend patterns.
     """
-    get_user_meter(db, meter_id, current_user.id)
+    verify_meter_ownership(db, meter_id, current_user.id)
 
     analyzer = UsageAnalyzer(db)
     return analyzer.get_weekly_usage(meter_id, start_date, end_date)

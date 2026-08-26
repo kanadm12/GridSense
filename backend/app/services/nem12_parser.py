@@ -10,6 +10,18 @@ File structure:
 - Record 900: End of data
 
 Reference: AEMO MDFF Specification
+
+Timezone contract
+-----------------
+NEM12 interval dates are recorded in Australian Eastern Standard Time, which is the
+National Electricity Market's fixed "market time" (UTC+10, **no daylight saving**). This
+parser therefore treats every interval timestamp as naive AEST wall-clock: the date from a
+300 record is expanded into evenly spaced interval-end timestamps with no timezone
+conversion and no DST adjustment. Downstream Time-of-Use classification
+(``app/services/tariff.py``) applies its hour-of-day boundaries directly to these
+wall-clock timestamps, so the two sides must agree that stored time == AEST. Do not attach
+a DST-observing timezone (e.g. ``Australia/Melbourne``) to these timestamps — that would
+silently shift interval boundaries by an hour for half the year.
 """
 
 import csv
@@ -51,9 +63,15 @@ class NEM12Parser:
     QUALITY_ESTIMATED = "E"
     QUALITY_SUBSTITUTED = "S"
 
-    # Register suffixes
-    SUFFIX_IMPORT = "B"  # Consumption (buying from grid)
-    SUFFIX_EXPORT = "E"  # Generation (selling to grid)
+    # Register suffixes.
+    # NOTE: The AEMO NMI convention is E* = consumption/import, B* = generation/export.
+    # The values below are inverted relative to that convention, and register_type is
+    # currently hardcoded to "B" for every reading (see _parse_interval_data) rather than
+    # being derived from the suffix. Correcting this needs a data migration and a product
+    # decision on how solar export is billed, so it is intentionally deferred; treat these
+    # constants as GridSense-internal labels, not the AEMO meaning.
+    SUFFIX_IMPORT = "B"  # (GridSense-internal) consumption / buying from grid
+    SUFFIX_EXPORT = "E"  # (GridSense-internal) generation / selling to grid
 
     def __init__(self):
         self.errors: list[str] = []
@@ -230,7 +248,9 @@ class NEM12Parser:
             if quality_str and quality_str[0] in ("A", "E", "S", "F", "N"):
                 quality = quality_str[0]
 
-        # Determine register type from suffix context (will be set by caller if needed)
+        # Determine register type from suffix context (will be set by caller if needed).
+        # Currently hardcoded to consumption for all intervals — see the SUFFIX_* note above
+        # (suffix-derived register typing is deferred pending a migration decision).
         register_type = "B"  # Default to import/consumption
 
         # Parse each interval value
@@ -238,7 +258,8 @@ class NEM12Parser:
             try:
                 value = float(value_str.strip()) if value_str.strip() else 0.0
 
-                # Calculate timestamp for this interval (end of interval)
+                # Calculate timestamp for this interval (end of interval), as naive AEST
+                # wall-clock — no timezone conversion, no DST (see module docstring).
                 # First interval (i=0) ends at 00:30, second at 01:00, etc.
                 interval_end = interval_date + timedelta(minutes=(i + 1) * interval_minutes)
 

@@ -10,6 +10,16 @@ from sqlalchemy.orm import Session
 from app.models.meter import Meter
 from app.models.reading import Reading
 from app.schemas.usage import DailyUsage, HourlyUsage, UsageSummary, WeeklyUsage
+from app.services.tariff import (
+    DEFAULT_FLAT_RATE,
+    OFF_PEAK_END_HOUR,
+    OFF_PEAK_START_HOUR,
+    PEAK_END_HOUR,
+    PEAK_START_HOUR,
+    TouPeriod,
+    classify_tou_period,
+    split_readings_by_period,
+)
 
 
 def _ensure_date(value: date | str) -> date:
@@ -22,14 +32,15 @@ def _ensure_date(value: date | str) -> date:
 class UsageAnalyzer:
     """Service for analyzing energy usage data."""
 
-    # Victorian TOU periods (typical)
-    PEAK_START = 15  # 3pm
-    PEAK_END = 21  # 9pm
-    OFF_PEAK_START = 22  # 10pm
-    OFF_PEAK_END = 7  # 7am
+    # Victorian TOU period boundaries, sourced from the shared tariff module so the
+    # analyzer never diverges from billing/forecasting.
+    PEAK_START = PEAK_START_HOUR  # 3pm
+    PEAK_END = PEAK_END_HOUR  # 9pm
+    OFF_PEAK_START = OFF_PEAK_START_HOUR  # 10pm
+    OFF_PEAK_END = OFF_PEAK_END_HOUR  # 7am
 
-    # Flat rate estimate (c/kWh) - Victorian average
-    FLAT_RATE = 0.25  # $0.25 per kWh
+    # Flat rate estimate ($/kWh) - Victorian average
+    FLAT_RATE = DEFAULT_FLAT_RATE  # $0.25 per kWh
 
     def __init__(self, db: Session):
         self.db = db
@@ -117,26 +128,22 @@ class UsageAnalyzer:
         return daily_usage
 
     def _batch_tou_breakdown(self, readings: list[Reading]) -> dict[date, dict[str, float]]:
-        """Calculate TOU breakdown for multiple days from a batch of readings."""
+        """Calculate weekday-aware TOU breakdown for multiple days from a batch of readings."""
         result: dict[date, dict[str, float]] = defaultdict(
             lambda: {"peak": 0.0, "off_peak": 0.0, "shoulder": 0.0}
         )
-        
+
         for reading in readings:
+            if reading.timestamp is None:
+                continue
             day = reading.timestamp.date()
-            hour = reading.timestamp.hour
-            
-            if self.PEAK_START <= hour < self.PEAK_END:
-                result[day]["peak"] += reading.value
-            elif hour >= self.OFF_PEAK_START or hour < self.OFF_PEAK_END:
-                result[day]["off_peak"] += reading.value
-            else:
-                result[day]["shoulder"] += reading.value
-        
+            period = classify_tou_period(reading.timestamp)
+            result[day][period.value] += reading.value
+
         return dict(result)
 
     def _get_tou_breakdown(self, meter_id: int, day: date | str) -> dict[str, float]:
-        """Get Time-of-Use breakdown for a specific day."""
+        """Get weekday-aware Time-of-Use breakdown for a specific day."""
         day = _ensure_date(day)
         start = datetime.combine(day, datetime.min.time())
         end = datetime.combine(day, datetime.max.time())
@@ -151,20 +158,12 @@ class UsageAnalyzer:
             .all()
         )
 
-        peak = 0.0
-        off_peak = 0.0
-        shoulder = 0.0
-
-        for reading in readings:
-            hour = reading.timestamp.hour
-            if self.PEAK_START <= hour < self.PEAK_END:
-                peak += reading.value
-            elif hour >= self.OFF_PEAK_START or hour < self.OFF_PEAK_END:
-                off_peak += reading.value
-            else:
-                shoulder += reading.value
-
-        return {"peak": peak, "off_peak": off_peak, "shoulder": shoulder}
+        buckets = split_readings_by_period(readings)
+        return {
+            "peak": buckets[TouPeriod.PEAK],
+            "off_peak": buckets[TouPeriod.OFF_PEAK],
+            "shoulder": buckets[TouPeriod.SHOULDER],
+        }
 
     def get_hourly_usage(
         self,

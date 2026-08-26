@@ -7,62 +7,83 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
+from app.api.ownership import verify_meter_ownership
 from app.database import get_db
 from app.models.meter import Meter
 from app.models.reading import Reading
 from app.models.tariff import Tariff
 from app.models.user import User
 from app.schemas.billing import BillComparisonResponse, PeriodComparison
+from app.services.tariff import (
+    DEFAULT_FLAT_RATE_CENTS,
+    DEFAULT_OFF_PEAK_RATE_CENTS,
+    DEFAULT_PEAK_RATE_CENTS,
+    DEFAULT_SHOULDER_RATE_CENTS,
+    TouPeriod,
+    split_readings_by_period,
+)
 
 router = APIRouter(prefix="/billing", tags=["Billing"])
+
+# Fallback supply charge (cents/day) when the user has no configured tariff. Matches the
+# Tariff model's own default so a configured-but-unmodified tariff and no tariff agree.
+DEFAULT_SUPPLY_CHARGE_CENTS = 100.0
 
 
 def calculate_period_cost(
     db: Session, meter_id: int, start: date, end: date, tariff: Tariff | None
 ) -> tuple[float, float, int]:
-    """Calculate total kWh and cost for a period."""
+    """Calculate total kWh and cost for a period.
+
+    For Time-of-Use tariffs each interval is bucketed into its real ToU period via the
+    shared tariff classifier, so the cost reflects *when* energy was actually used rather
+    than a fixed assumed split.
+    """
     start_dt = datetime.combine(start, datetime.min.time())
     end_dt = datetime.combine(end, datetime.max.time())
-
-    # Get total consumption
-    result = (
-        db.query(func.sum(Reading.value).label("total_kwh"))
-        .filter(
-            Reading.meter_id == meter_id,
-            Reading.timestamp >= start_dt,
-            Reading.timestamp <= end_dt,
-            Reading.register_type == "B",  # Consumption only
-        )
-        .first()
-    )
-
-    total_kwh = result.total_kwh or 0.0
     days = (end - start).days + 1
 
-    # Calculate cost
-    if tariff:
-        if tariff.tariff_type == "flat":
-            rate = tariff.flat_rate_cents_kwh or 25.0
-            cost = (total_kwh * rate) / 100
-        else:
-            # For TOU, we need to calculate by period
-            # Simplified: assume 25% peak, 35% shoulder, 40% off-peak
-            peak_kwh = total_kwh * 0.25
-            shoulder_kwh = total_kwh * 0.35
-            off_peak_kwh = total_kwh * 0.40
+    base_filters = (
+        Reading.meter_id == meter_id,
+        Reading.timestamp >= start_dt,
+        Reading.timestamp <= end_dt,
+        Reading.register_type == "B",  # Consumption only
+    )
 
-            peak_cost = (peak_kwh * (tariff.peak_rate_cents_kwh or 38)) / 100
-            shoulder_cost = (shoulder_kwh * (tariff.shoulder_rate_cents_kwh or 25)) / 100
-            off_peak_cost = (off_peak_kwh * (tariff.off_peak_rate_cents_kwh or 18)) / 100
+    if tariff and tariff.tariff_type != "flat":
+        # Real per-interval Time-of-Use bucketing.
+        readings = db.query(Reading.timestamp, Reading.value).filter(*base_filters).all()
+        buckets = split_readings_by_period(readings)
+        total_kwh = (
+            buckets[TouPeriod.PEAK]
+            + buckets[TouPeriod.SHOULDER]
+            + buckets[TouPeriod.OFF_PEAK]
+        )
 
-            cost = peak_cost + shoulder_cost + off_peak_cost
+        peak_rate = tariff.peak_rate_cents_kwh or DEFAULT_PEAK_RATE_CENTS
+        shoulder_rate = tariff.shoulder_rate_cents_kwh or DEFAULT_SHOULDER_RATE_CENTS
+        off_peak_rate = tariff.off_peak_rate_cents_kwh or DEFAULT_OFF_PEAK_RATE_CENTS
 
-        # Add supply charge
+        cost = (
+            buckets[TouPeriod.PEAK] * peak_rate
+            + buckets[TouPeriod.SHOULDER] * shoulder_rate
+            + buckets[TouPeriod.OFF_PEAK] * off_peak_rate
+        ) / 100
         cost += (tariff.daily_supply_charge_cents * days) / 100
-    else:
-        # Default flat rate
-        cost = (total_kwh * 25) / 100 + (100 * days) / 100
+        return total_kwh, cost, days
 
+    # Flat tariff (or no tariff): a single aggregate query is sufficient and cheaper.
+    result = db.query(func.sum(Reading.value).label("total_kwh")).filter(*base_filters).first()
+    total_kwh = result.total_kwh or 0.0
+
+    if tariff:
+        rate = tariff.flat_rate_cents_kwh or DEFAULT_FLAT_RATE_CENTS
+        supply_cents = tariff.daily_supply_charge_cents
+    else:
+        rate = DEFAULT_FLAT_RATE_CENTS
+        supply_cents = DEFAULT_SUPPLY_CHARGE_CENTS
+
+    cost = (total_kwh * rate) / 100 + (supply_cents * days) / 100
     return total_kwh, cost, days
 
 
@@ -77,17 +98,7 @@ async def get_bill_comparison(
     current_user: User = Depends(get_current_user),
 ) -> BillComparisonResponse:
     """Compare usage and costs between two billing periods."""
-    # Verify meter ownership
-    meter = (
-        db.query(Meter)
-        .filter(Meter.id == meter_id, Meter.user_id == current_user.id)
-        .first()
-    )
-    if not meter:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Meter not found.",
-        )
+    meter = verify_meter_ownership(db, meter_id, current_user.id)
 
     # Get user's tariff
     tariff = db.query(Tariff).filter(Tariff.user_id == current_user.id).first()

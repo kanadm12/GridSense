@@ -10,6 +10,11 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models.reading import Reading
+from app.services.tariff import (
+    DEFAULT_OFF_PEAK_RATE,
+    DEFAULT_PEAK_RATE,
+    is_peak,
+)
 
 
 class AnomalyType(str, Enum):
@@ -60,7 +65,7 @@ class AnomalyDetector:
         daily_totals = (
             self.db.query(
                 func.date(Reading.timestamp).label("date"),
-                func.sum(Reading.kwh).label("total_kwh"),
+                func.sum(Reading.value).label("total_kwh"),
             )
             .filter(
                 Reading.meter_id == meter_id,
@@ -139,7 +144,7 @@ class AnomalyDetector:
         for r in overnight_readings:
             if r.timestamp and 0 <= r.timestamp.hour < 6:
                 night_date = r.timestamp.date()
-                nightly_usage[night_date] += r.kwh
+                nightly_usage[night_date] += r.value
                 nightly_readings[night_date] += 1
 
         anomalies = []
@@ -203,14 +208,12 @@ class AnomalyDetector:
         for r in readings:
             if r.timestamp:
                 day = r.timestamp.date()
-                hour = r.timestamp.hour
-                weekday = r.timestamp.weekday()
-                
-                daily_usage[day]["total"] += r.kwh
-                
-                # Peak is 3pm-9pm on weekdays
-                if weekday < 5 and 15 <= hour < 21:
-                    daily_usage[day]["peak"] += r.kwh
+
+                daily_usage[day]["total"] += r.value
+
+                # Peak is 3pm-9pm on weekdays (shared Victorian ToU definition)
+                if is_peak(r.timestamp):
+                    daily_usage[day]["peak"] += r.value
 
         anomalies = []
         for day, usage in daily_usage.items():
@@ -220,7 +223,7 @@ class AnomalyDetector:
             peak_ratio = usage["peak"] / usage["total"]
             
             if peak_ratio > self.PEAK_RATIO_THRESHOLD:
-                extra_cost = usage["peak"] * (0.38 - 0.18)  # Peak vs off-peak difference
+                extra_cost = usage["peak"] * (DEFAULT_PEAK_RATE - DEFAULT_OFF_PEAK_RATE)  # Peak vs off-peak difference
                 
                 anomalies.append({
                     "type": AnomalyType.PEAK_HEAVY,

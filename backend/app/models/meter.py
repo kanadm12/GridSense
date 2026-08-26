@@ -10,6 +10,8 @@ from app.models.base import Base, TimestampMixin
 if TYPE_CHECKING:
     from app.models.reading import Reading
     from app.models.user import User
+    from app.models.chat import ChatSession
+    from app.models.ml_training import MLTrainingJob
 
 
 class Meter(Base, TimestampMixin):
@@ -36,11 +38,17 @@ class Meter(Base, TimestampMixin):
     # Display name for the meter
     name: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
+    # Whether this meter is the user's active meter (used as the default for insights,
+    # forecasting and the AI assistant when no explicit meter_id is supplied).
+    is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
+
     # Relationships
     user: Mapped["User"] = relationship("User", back_populates="meters")
     readings: Mapped[list["Reading"]] = relationship(
         "Reading", back_populates="meter", lazy="dynamic", cascade="all, delete-orphan"
     )
+    chat_sessions: Mapped[list["ChatSession"]] = relationship("ChatSession", back_populates="meter", cascade="all, delete-orphan")
+    ml_training_jobs: Mapped[list["MLTrainingJob"]] = relationship("MLTrainingJob", back_populates="meter", cascade="all, delete-orphan")
 
     def __repr__(self) -> str:
         return f"<Meter(id={self.id}, nmi={self.nmi})>"
