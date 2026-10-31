@@ -1,0 +1,4 @@
+case,status,feasible,available_shift_benefit_aud,available_shift_inconvenience_penalty_aud,realized_energy_saving_vs_preferred_aud,inconvenience_penalty_aud,weighted_objective_change_vs_preferred_aud,interpretation
+zero_flexibility_fixed_mandatory_task,feasible,True,0.0,0.0,0.0,0.0,0.0,One feasible mandatory task has a single allowed start; it cannot shift.
+benefit_below_inconvenience_penalty,feasible,True,0.005,0.01,0.0,0.0,0.0,A 0.005 AUD possible energy-charge reduction is below the 0.01 AUD one-interval preference penalty; MILP retains the preferred start.
+appliance_unavailable,not_representable,,,,,,,The v1 request requires at least one task and has no appliance availability field; unavailable appliances are not simulated as eligible tasks.

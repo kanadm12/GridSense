@@ -58,9 +58,8 @@ class UsageSummary(BaseModel):
     peak_avg_kwh: float
     off_peak_percentage: float
 
-    # Cost estimates (using flat rate)
-    estimated_total_cost: float
-    estimated_daily_cost: float
+    estimated_total_cost: float | None = None
+    estimated_daily_cost: float | None = None
 
 
 class UsageChartData(BaseModel):

@@ -1,0 +1,89 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="920" viewBox="0 0 1440 920" role="img" aria-labelledby="title description">
+  <title id="title">GridSense Stage 1 prototype architecture and evidence boundary</title>
+  <desc id="description">A readable architecture diagram showing the Expo mobile client, FastAPI backend, PostgreSQL or dedicated SQLite demo database, Redis worker, optional integrations, and separate synthetic research experiments. Device dispatch and real-data validation are outside the demonstrated boundary.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+      <path d="M1,1 L11,6 L1,11 Z" fill="#35536b"/>
+    </marker>
+    <style>
+      .bg { fill: #f5f8fc; }
+      .title { font: 700 30px Arial, sans-serif; fill: #102a43; }
+      .subtitle { font: 16px Arial, sans-serif; fill: #486581; }
+      .head { font: 700 20px Arial, sans-serif; fill: #102a43; }
+      .text { font: 16px Arial, sans-serif; fill: #243b53; }
+      .small { font: 14px Arial, sans-serif; fill: #486581; }
+      .boundary { font: 700 14px Arial, sans-serif; letter-spacing: 1px; fill: #486581; }
+      .box { stroke: #829ab1; stroke-width: 2; rx: 14; }
+      .app { fill: #e6f6ff; stroke: #2680c2; }
+      .api { fill: #e3f9e5; stroke: #2f9e44; }
+      .data { fill: #fff3c4; stroke: #d69e2e; }
+      .optional { fill: #f0e7ff; stroke: #7950a1; stroke-dasharray: 8 6; }
+      .research { fill: #edf2f7; stroke: #627d98; }
+      .limit { fill: #fff0f0; stroke: #d64545; stroke-dasharray: 8 6; }
+      .line { fill: none; stroke: #35536b; stroke-width: 3; marker-end: url(#arrow); }
+      .dash { fill: none; stroke: #7950a1; stroke-width: 2.5; stroke-dasharray: 8 6; marker-end: url(#arrow); }
+    </style>
+  </defs>
+  <rect class="bg" x="0" y="0" width="1440" height="920"/>
+  <text class="title" x="56" y="58">GridSense Stage 1 — prototype architecture</text>
+  <text class="subtitle" x="56" y="88">Product path, local demo data, and research artifacts are separated so synthetic evidence is not mistaken for customer data.</text>
+
+  <text class="boundary" x="56" y="137">DEMONSTRATED PRODUCT PATH</text>
+  <rect class="box app" x="56" y="160" width="290" height="270"/>
+  <text class="head" x="82" y="198">Expo mobile client</text>
+  <text class="text" x="82" y="237">• Authentication and meter selection</text>
+  <text class="text" x="82" y="270">• NEM12 upload/status/warnings</text>
+  <text class="text" x="82" y="303">• Usage, tariff, and advisory views</text>
+  <text class="text" x="82" y="336">• MILP schedule preview</text>
+  <text class="small" x="82" y="382">Accept/reject is preview-only today.</text>
+  <text class="small" x="82" y="405">No persistent choice or device dispatch.</text>
+
+  <rect class="box api" x="420" y="160" width="450" height="270"/>
+  <text class="head" x="446" y="198">FastAPI application</text>
+  <text class="text" x="446" y="237">Auth + ownership-protected API routes</text>
+  <text class="text" x="446" y="270">NEM12 parser/importer + safe status</text>
+  <text class="text" x="446" y="303">Tariff, billing, usage, recommendation</text>
+  <text class="text" x="446" y="336">Scheduling contract + optimizer preview</text>
+  <text class="small" x="446" y="382">Energy estimate requires eligible data</text>
+  <text class="small" x="446" y="405">and configured tariff; not a full bill.</text>
+
+  <rect class="box data" x="946" y="160" width="420" height="160"/>
+  <text class="head" x="972" y="198">Relational database</text>
+  <text class="text" x="972" y="237">PostgreSQL: intended deployment</text>
+  <text class="text" x="972" y="270">SQLite: isolated synthetic demo seed</text>
+  <text class="small" x="972" y="298">Live PostgreSQL/restore not verified.</text>
+
+  <rect class="box data" x="946" y="350" width="420" height="150"/>
+  <text class="head" x="972" y="388">Redis + RQ worker</text>
+  <text class="text" x="972" y="427">Asynchronous import and optional jobs</text>
+  <text class="small" x="972" y="464">Redis outage / process recovery not verified.</text>
+
+  <rect class="box optional" x="420" y="545" width="450" height="132"/>
+  <text class="head" x="446" y="583">Optional external integrations</text>
+  <text class="text" x="446" y="620">SMTP · OpenAI · Expo push · Home Assistant</text>
+  <text class="small" x="446" y="651">Not required for the synthetic core demo.</text>
+
+  <rect class="box limit" x="946" y="545" width="420" height="132"/>
+  <text class="head" x="972" y="583">Not in the demonstrated path</text>
+  <text class="text" x="972" y="620">Real appliance command / automation dispatch</text>
+  <text class="small" x="972" y="651">Do not imply interoperability or execution.</text>
+
+  <path class="line" d="M346 290 H412"/>
+  <text class="small" x="350" y="274">HTTPS/API</text>
+  <path class="line" d="M870 245 H938"/>
+  <text class="small" x="875" y="229">read/write</text>
+  <path class="line" d="M870 335 C910 335 906 420 938 420"/>
+  <text class="small" x="876" y="369">enqueue</text>
+  <path class="dash" d="M646 438 V537"/>
+
+  <text class="boundary" x="56" y="725">SEPARATE RESEARCH / EVIDENCE PATH</text>
+  <rect class="box research" x="56" y="748" width="650" height="124"/>
+  <text class="head" x="82" y="787">Synthetic scheduling experiment</text>
+  <text class="text" x="82" y="823">Generated profiles, stylized tariffs, matched S1/S2, inconvenience and cost</text>
+  <text class="small" x="82" y="852">Eight recurring generated profiles; not 192 independent households.</text>
+
+  <rect class="box research" x="746" y="748" width="620" height="124"/>
+  <text class="head" x="772" y="787">Public-data forecasting evaluation</text>
+  <text class="text" x="772" y="823">Single UCI household, Sceaux, France; chronological benchmark</text>
+  <text class="small" x="772" y="852">Not an Australian customer forecast, tariff study, or savings result.</text>
+</svg>

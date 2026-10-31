@@ -23,6 +23,31 @@ class RecommendationCategory(str, Enum):
     GENERAL = "general"
 
 
+class RecommendationEstimateStatus(str, Enum):
+    """Whether an opportunity is supported by enough inputs to quantify."""
+
+    UNQUANTIFIED = "unquantified"
+    CONDITIONAL_ESTIMATE = "conditional_estimate"
+
+
+class RecommendationConfidence(str, Enum):
+    """Confidence in the interpretation, not a probability of savings."""
+
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+
+
+class RecommendationTariffStatus(str, Enum):
+    """Availability and provenance of the meter owner's configured tariff."""
+
+    MISSING = "missing"
+    ILLUSTRATIVE = "illustrative"
+    OUTSIDE_EFFECTIVE_DATES = "outside_effective_dates"
+    MISSING_RATES = "missing_rates"
+    CONFIGURED = "configured"
+
+
 class Recommendation(BaseModel):
     """A single energy recommendation."""
 
@@ -35,6 +60,17 @@ class Recommendation(BaseModel):
     potential_savings_dollars: float | None = None
     action: str  # What the user should do
     reason: str  # Why this recommendation was made
+    observed_fact: str
+    proposed_action: str
+    conditional_opportunity: str
+    estimate_status: RecommendationEstimateStatus
+    baseline: str
+    assumptions: list[str]
+    rate_difference_cents_kwh: float | None = None
+    applicable_intervals: str
+    uncertainty: str
+    confidence: RecommendationConfidence
+    data_requirements: list[str]
 
 
 class RecommendationsResponse(BaseModel):
@@ -42,3 +78,4 @@ class RecommendationsResponse(BaseModel):
 
     recommendations: list[Recommendation]
     total_potential_savings: float | None = None
+    tariff_status: RecommendationTariffStatus = RecommendationTariffStatus.MISSING

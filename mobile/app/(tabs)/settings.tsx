@@ -5,26 +5,42 @@ import {
   ScrollView,
   TouchableOpacity,
   Alert,
+  Platform,
 } from 'react-native';
 import { router } from 'expo-router';
 import { useAuthStore, useMetersStore } from '@/stores';
 import { Colors, Spacing, BorderRadius, FontSize, FontWeight, Shadow } from '@/constants/theme';
 import { Ionicons } from '@expo/vector-icons';
 
+declare const window: {
+  confirm(message: string): boolean;
+};
+
 export default function SettingsScreen() {
   const { user, logout } = useAuthStore();
   const { meters, selectedMeter, selectMeter, deleteMeter } = useMetersStore();
 
+  const signOut = async () => {
+    await logout();
+    router.replace('/(auth)/login');
+  };
+
   const handleLogout = () => {
+    if (Platform.OS === 'web') {
+      const confirmed = typeof window !== 'undefined'
+        && window.confirm('Are you sure you want to sign out?');
+      if (confirmed) {
+        void signOut();
+      }
+      return;
+    }
+
     Alert.alert('Sign Out', 'Are you sure you want to sign out?', [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Sign Out',
         style: 'destructive',
-        onPress: async () => {
-          await logout();
-          router.replace('/(auth)/login');
-        },
+        onPress: signOut,
       },
     ]);
   };
@@ -128,6 +144,15 @@ export default function SettingsScreen() {
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>App</Text>
         <View style={styles.card}>
+          <TouchableOpacity
+            style={styles.menuRow}
+            onPress={() => router.push('/tariff-setup')}
+          >
+            <Ionicons name="cash-outline" size={22} color={Colors.text} />
+            <Text style={styles.menuText}>Tariff & Billing</Text>
+            <Ionicons name="chevron-forward" size={20} color={Colors.gray400} />
+          </TouchableOpacity>
+
           <TouchableOpacity style={styles.menuRow}>
             <Ionicons name="help-circle-outline" size={22} color={Colors.text} />
             <Text style={styles.menuText}>Help & Support</Text>

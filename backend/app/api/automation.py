@@ -8,7 +8,11 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
 from app.rate_limit import limiter
-from app.api.ownership import verify_device_ownership, verify_rule_ownership, verify_schedule_ownership
+from app.api.ownership import (
+    verify_device_ownership,
+    verify_rule_ownership,
+    verify_schedule_ownership,
+)
 from app.database import get_db
 from app.models.automation import (
     SmartDevice as SmartDeviceModel,
@@ -339,29 +343,29 @@ async def get_automation_suggestions(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> list[AutomationSuggestion]:
-    """Get AI-powered automation suggestions based on usage patterns."""
-    # In real implementation, would analyze user's meter data and devices
+    """Get illustrative automation scenarios without claiming user-specific savings."""
     suggestions = [
         AutomationSuggestion(
             device_type="water_heater",
             suggestion_title="Shift Water Heating to Off-Peak",
-            description="Your water heater uses ~4kWh daily. Running it between 11pm-6am could save up to 40% on water heating costs.",
-            potential_savings_kwh=1.6,
-            potential_savings_dollars=12.80,
+            description=(
+                "Example only. A cost estimate requires a declared heater, its "
+                "energy demand, a safe operating window, and a verified tariff."
+            ),
             trigger_type="time",
             recommended_schedule={
                 "start_time": "23:00",
                 "end_time": "06:00",
                 "days": [0, 1, 2, 3, 4, 5, 6],
             },
-            confidence=0.85,
         ),
         AutomationSuggestion(
             device_type="hvac",
             suggestion_title="Pre-cool Before Peak Hours",
-            description="Pre-cool your home before 3pm peak pricing starts. This can reduce AC usage during expensive peak hours by 30%.",
-            potential_savings_kwh=2.5,
-            potential_savings_dollars=18.75,
+            description=(
+                "Example only. Suitability and cost depend on the home's thermal "
+                "response, HVAC data, comfort limits, and a verified tariff."
+            ),
             trigger_type="time",
             recommended_schedule={
                 "start_time": "14:00",
@@ -369,35 +373,34 @@ async def get_automation_suggestions(
                 "action": "set_temp",
                 "params": {"temperature": 22},
             },
-            confidence=0.78,
         ),
         AutomationSuggestion(
             device_type="pool_pump",
             suggestion_title="Run Pool Pump During Solar Hours",
-            description="If you have solar, run your pool pump between 10am-2pm when solar production is highest.",
-            potential_savings_kwh=3.0,
-            potential_savings_dollars=22.50,
+            description=(
+                "Example only. Solar output, pump demand, operating constraints, "
+                "and tariff data are not measured by this suggestion."
+            ),
             trigger_type="solar_production",
             recommended_schedule={
                 "start_time": "10:00",
                 "end_time": "14:00",
                 "trigger": "solar_production > 2kW",
             },
-            confidence=0.72,
         ),
         AutomationSuggestion(
             device_type="ev_charger",
             suggestion_title="Smart EV Charging",
-            description="Charge your EV during off-peak hours (10pm-7am) to save up to 50% on charging costs.",
-            potential_savings_kwh=8.0,
-            potential_savings_dollars=60.00,
+            description=(
+                "Example only. A cost estimate requires the vehicle's charging "
+                "demand, a feasible window, and a verified tariff."
+            ),
             trigger_type="time",
             recommended_schedule={
                 "start_time": "22:00",
                 "end_time": "07:00",
                 "days": [0, 1, 2, 3, 4],  # Weekdays
             },
-            confidence=0.92,
         ),
     ]
     return suggestions

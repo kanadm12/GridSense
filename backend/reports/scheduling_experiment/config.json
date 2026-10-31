@@ -1,0 +1,78 @@
+{
+  "experiment": "synthetic_scheduling_strategy_comparison",
+  "design": {
+    "seed": 20261031,
+    "household_count": 8,
+    "flexibility_hours": [
+      2,
+      6,
+      10
+    ],
+    "forecast_error_spread_fractions": [
+      0.0,
+      0.5
+    ],
+    "appliance_mixes": [
+      "light",
+      "mixed"
+    ],
+    "tariff_spread_factors": [
+      0.0,
+      1.0
+    ]
+  },
+  "strategies": {
+    "S0_no_intervention": "Run each task at its original preferred start.",
+    "S1_greedy_nominal": "Existing deterministic greedy reference, using the nominal tariff.",
+    "S2_milp_nominal": "Existing MILP, using the identical nominal tariff as S1.",
+    "S2_milp_forecast": "Existing MILP, using a noisy forecast of future realized interval prices.",
+    "oracle_milp_perfect_information": "Existing MILP with realized prices, optimizing energy charge plus inconvenience.",
+    "oracle_milp_energy_only": "Existing MILP with realized prices and the preference penalty set to zero."
+  },
+  "synthetic_assumptions": {
+    "households": 8,
+    "household_profiles": "Generated synthetic profiles; the same 8 profiles are reused across 192 factorial cells and are not independent household observations.",
+    "tariff": "Stylized synthetic AUD energy-only TOU schedule; not observed Australian retail prices.",
+    "scheduling_time_information": "Nominal time-of-use periods and the price shape are assumed known when planning. S1 and S2_milp_nominal receive identical nominal prices.",
+    "realized_price_noise_sd_aud_per_kwh": "0.025 * tariff_spread_factor; zero-mean sensitivity assumption, not calibrated to observed retail price deviations.",
+    "forecast_error_sd_aud_per_kwh": "0.25 * forecast_error_spread_fraction * tariff_spread_factor; an uncalibrated stress sensitivity, not a validated forecast distribution.",
+    "forecast_generation": "Realized synthetic price plus an independent Gaussian forecast-error perturbation.",
+    "price_floor_aud_per_kwh": 0.01,
+    "price_assumption_rationale": "Chosen to expose sensitivity to uncertainty and tariff spread only; not claimed to be representative of Australian retail tariffs or forecast errors.",
+    "appliance_profiles": "Fixed power and duration task assumptions in source.",
+    "household_power_limit_kw": 8.0,
+    "preference_penalty_aud_per_interval": 0.01,
+    "weighted_objective": "realized energy charge AUD + preference_penalty_aud_per_interval times absolute start-time distance in scheduling intervals",
+    "baseline_energy_cost_aud_compatibility": "Deprecated alias for non_flexible_baseline_energy_cost_aud; not complete S0.",
+    "s0_reference_energy_cost_aud": "Complete realized energy charge at preferred starts.",
+    "equity_metric_definitions": {
+      "software_access": "Not measured; technically complete synthetic advisory inputs are a pipeline-eligibility proxy only and do not establish that a person can access or use the software.",
+      "actionability": "Technical feasibility/completion only: the schedule is feasible and all mandatory tasks complete. Practical user actionability is not measured.",
+      "benefit": "Absolute modeled energy-charge reduction from the same case's S0, in AUD; not a full bill or verified household saving.",
+      "inconvenience": "Sum of absolute task start-time displacements from preferred starts, in hours.",
+      "weighted_objective": "Realized energy charge plus the configured preference penalty; a model score, not a validated welfare measure.",
+      "group_labels": "Only generated scenario categories (flexibility hours and appliance mix) are used; no demographic or socioeconomic groups are inferred.",
+      "der_comparison": "Not estimable: source profiles do not encode PV generation, battery storage, or a verified DER-ownership category. EV charging is only a modeled load task."
+    },
+    "equity_grouping": "Synthetic flexibility-hours and appliance-mix categories only; no demographic inference or measured DER categories.",
+    "numerical_tolerance_aud": 1e-08,
+    "simulation_date": "2026-03-02",
+    "timezone": "Australia/Melbourne",
+    "interval_minutes": 30,
+    "solver": "SciPy 1.17.1 milp (HiGHS backend)",
+    "numpy_version": "2.4.6",
+    "platform": "Windows-10-10.0.26200-SP0"
+  },
+  "case_count": 192,
+  "result_rows": 1152,
+  "paired_comparison_rows": 576,
+  "paired_summary_rows": 30,
+  "equity_summary_rows": 15,
+  "equity_flexibility_sensitivity_rows": 6,
+  "equity_provenance_rows": 10,
+  "equity_boundary_case_rows": 3,
+  "robustness_rows": 5,
+  "interval_price_rows": 9216,
+  "task_schedule_rows": 3456,
+  "seed": 20261031
+}

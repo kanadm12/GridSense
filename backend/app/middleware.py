@@ -46,7 +46,6 @@ class LoggingMiddleware(BaseHTTPMiddleware):
                     "path": str(request.url.path),
                     "user_id": user_id,
                     "duration_ms": duration_ms,
-                    "error": str(exc),
                     "error_type": type(exc).__name__,
                 },
             )

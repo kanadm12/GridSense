@@ -1,5 +1,10 @@
 # GridSense Backup and Disaster Recovery Guide
 
+> **Verification status:** The procedure and verifier are documented, but a
+> PostgreSQL restore has not been executed. On 2026-10-31 the Docker Desktop
+> Linux engine was unavailable, so Docker-backed staging backup/restore remains
+> unverified. The Compose database is named `gridsense`.
+
 ## Backup Strategy
 
 ### What to Back Up
@@ -9,6 +14,10 @@
 4. **Redis Data** - Job queue state (optional, transient data)
 
 ### Backup Frequency
+
+The following are operational recommendations only; no scheduled backup job is
+configured by this guide.
+
 - **Database**: Daily full backup + hourly incremental
 - **ML Models**: Weekly or after training (less critical)
 - **Configuration**: On every change
@@ -17,14 +26,14 @@
 
 ### Manual Backup
 ```bash
-# Full database dump
-docker compose exec db pg_dump -U postgres gridsense_prod > backup_$(date +%Y%m%d_%H%M%S).sql
+# Full database dump (Compose database name is `gridsense`)
+docker compose exec -T db pg_dump -U postgres gridsense > backup_$(date +%Y%m%d_%H%M%S).sql
 
 # Compressed backup
-docker compose exec db pg_dump -U postgres gridsense_prod | gzip > backup_$(date +%Y%m%d_%H%M%S).sql.gz
+docker compose exec -T db pg_dump -U postgres gridsense | gzip > backup_$(date +%Y%m%d_%H%M%S).sql.gz
 
 # Backup with custom format (supports parallel restore)
-docker compose exec db pg_dump -U postgres -Fc gridsense_prod > backup_$(date +%Y%m%d_%H%M%S).dump
+docker compose exec -T db pg_dump -U postgres -Fc gridsense > backup_$(date +%Y%m%d_%H%M%S).dump
 ```
 
 ### Automated Daily Backup Script
@@ -32,29 +41,30 @@ docker compose exec db pg_dump -U postgres -Fc gridsense_prod > backup_$(date +%
 Create `scripts/backup.sh`:
 ```bash
 #!/bin/bash
-set -e
+set -Eeuo pipefail
+umask 077
 
 BACKUP_DIR="/var/backups/gridsense"
 DATE=$(date +%Y%m%d_%H%M%S)
-BACKUP_FILE="$BACKUP_DIR/gridsense_$DATE.dump"
+BACKUP_FILE="$BACKUP_DIR/gridsense_$DATE.dump.gz"
+TEMP_FILE="$BACKUP_FILE.partial"
 RETENTION_DAYS=30
 
 # Create backup directory
-mkdir -p $BACKUP_DIR
+mkdir -p -- "$BACKUP_DIR"
 
-# Perform backup
-docker compose exec -T db pg_dump -U postgres -Fc gridsense_prod > $BACKUP_FILE
+# Stream a custom-format dump through gzip; pipefail detects pg_dump failures.
+docker compose exec -T db pg_dump -U postgres -Fc gridsense | gzip -c > "$TEMP_FILE"
 
-# Compress
-gzip $BACKUP_FILE
+# Validate the compressed archive before publishing it.
+gzip -t -- "$TEMP_FILE"
+gzip -dc -- "$TEMP_FILE" | pg_restore --list > /dev/null
+mv -- "$TEMP_FILE" "$BACKUP_FILE"
 
 # Delete old backups (keep last 30 days)
-find $BACKUP_DIR -name "gridsense_*.dump.gz" -mtime +$RETENTION_DAYS -delete
+find "$BACKUP_DIR" -type f -name "gridsense_*.dump.gz" -mtime +"$RETENTION_DAYS" -delete
 
-# Verify backup integrity
-gunzip -c $BACKUP_FILE.gz | head -n 1 | grep -q "PostgreSQL"
-
-echo "Backup completed: $BACKUP_FILE.gz"
+echo "Backup completed: $BACKUP_FILE"
 ```
 
 ### Schedule with Cron
@@ -72,7 +82,7 @@ crontab -e
 ```bash
 #!/bin/bash
 BACKUP_FILE="backup_$(date +%Y%m%d_%H%M%S).dump.gz"
-docker compose exec -T db pg_dump -U postgres -Fc gridsense_prod | gzip > $BACKUP_FILE
+docker compose exec -T db pg_dump -U postgres -Fc gridsense | gzip > "$BACKUP_FILE"
 aws s3 cp $BACKUP_FILE s3://gridsense-backups/db/$BACKUP_FILE
 rm $BACKUP_FILE
 ```
@@ -81,45 +91,49 @@ rm $BACKUP_FILE
 ```bash
 #!/bin/bash
 BACKUP_FILE="backup_$(date +%Y%m%d_%H%M%S).dump.gz"
-docker compose exec -T db pg_dump -U postgres -Fc gridsense_prod | gzip > $BACKUP_FILE
+docker compose exec -T db pg_dump -U postgres -Fc gridsense | gzip > "$BACKUP_FILE"
 gsutil cp $BACKUP_FILE gs://gridsense-backups/db/$BACKUP_FILE
 rm $BACKUP_FILE
 ```
 
 ## Database Restore
 
-### From SQL Dump
+### Verify a restore without replacing the active database
+
+Use a disposable database name. Do not drop or overwrite the active `gridsense`
+database as part of a restore test.
+
+For a compressed custom-format dump created by the commands above, run the
+repository verifier from the project root:
+
 ```bash
-# Stop API and workers (prevent writes during restore)
-docker compose stop api worker scheduler
-
-# Drop and recreate database (CAUTION: Data loss!)
-docker compose exec db psql -U postgres -c "DROP DATABASE gridsense_prod;"
-docker compose exec db psql -U postgres -c "CREATE DATABASE gridsense_prod;"
-
-# Restore from backup
-gunzip -c backup_20260818_120000.sql.gz | docker compose exec -T db psql -U postgres gridsense_prod
-
-# Restart services
-docker compose start api worker scheduler
+bash backend/scripts/verify_postgres_restore.sh /secure/path/gridsense_YYYYMMDD_HHMMSS.dump.gz
 ```
 
-### From Custom Format Dump
+The verifier validates the gzip/archive, refuses to overwrite an existing
+`gridsense_restore_test` database, restores into that isolated database, and
+compares row counts for users, meters, readings, uploads, and daily aggregates.
+Run it while the source database is quiet so writes after the backup do not
+cause a misleading count mismatch. It leaves the restore database available
+for inspection; remove it only after validation.
+
+The manual commands below are an alternative to the verifier:
+
 ```bash
-# Stop services
-docker compose stop api worker scheduler
+# Create an isolated restore target
+docker compose exec -T db createdb -U postgres --maintenance-db=postgres gridsense_restore_test
 
-# Restore (parallel restore with 4 jobs)
-gunzip -c backup_20260818_120000.dump.gz | docker compose exec -T db pg_restore -U postgres -d gridsense_prod -j 4
+# Restore a SQL archive, or use pg_restore for a custom-format archive
+gunzip -c backup_YYYYMMDD_HHMMSS.sql.gz | docker compose exec -T db psql -v ON_ERROR_STOP=1 -U postgres gridsense_restore_test
 
-# Restart services
-docker compose start api worker scheduler
+gunzip -c backup_YYYYMMDD_HHMMSS.dump.gz |
+  docker compose exec -T db pg_restore -U postgres --exit-on-error -d gridsense_restore_test --no-owner
 ```
 
 ### Verify Restore
 ```bash
 # Check row counts
-docker compose exec db psql -U postgres gridsense_prod -c "
+docker compose exec db psql -U postgres gridsense_restore_test -c "
 SELECT 
   'users' as table, COUNT(*) as count FROM users
 UNION ALL
@@ -131,12 +145,12 @@ SELECT 'daily_aggregates', COUNT(*) FROM daily_aggregates;
 "
 
 # Check latest reading timestamp
-docker compose exec db psql -U postgres gridsense_prod -c "
+docker compose exec db psql -U postgres gridsense_restore_test -c "
 SELECT MAX(timestamp) as latest_reading FROM readings;
 "
 
-# Test API health
-curl https://api.gridsense.example.com/health/ready
+# Remove only the disposable restore database after validation
+docker compose exec db dropdb -U postgres gridsense_restore_test
 ```
 
 ## ML Model Backup

@@ -25,6 +25,7 @@ class Meter(Base, TimestampMixin):
     # NMI is the unique identifier for meters in Australia's NEM
     nmi: Mapped[str] = mapped_column(String(10), index=True, nullable=False)
     meter_serial: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    register_id: Mapped[str | None] = mapped_column(String(10), nullable=True)
 
     # Meter configuration
     suffix: Mapped[str | None] = mapped_column(String(2), nullable=True)  # E1, B1, etc.

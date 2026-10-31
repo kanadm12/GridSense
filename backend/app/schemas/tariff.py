@@ -1,7 +1,9 @@
 """Tariff schemas for Victorian electricity rates."""
 
+from datetime import date
 from enum import Enum
-from pydantic import BaseModel, Field
+
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class TariffType(str, Enum):
@@ -14,13 +16,23 @@ class TariffType(str, Enum):
 
 
 class TariffPeriod(BaseModel):
-    """A time period with associated rate."""
+    """Local-clock window and rate; start/end are minutes since midnight."""
 
-    name: str  # e.g., "peak", "off_peak", "shoulder"
-    start_hour: int = Field(..., ge=0, le=23)
-    end_hour: int = Field(..., ge=0, le=23)
-    rate_cents_kwh: float
-    days: list[int] = Field(default=[0, 1, 2, 3, 4, 5, 6])  # 0=Mon, 6=Sun
+    name: str = Field(min_length=1, max_length=40)
+    start_minute: int = Field(ge=0, le=1439)
+    end_minute: int = Field(ge=1, le=1440)
+    rate_cents_kwh: float = Field(ge=0)
+    days: list[int] = Field(default_factory=lambda: list(range(7)))  # 0=Mon, 6=Sun
+
+    @model_validator(mode="after")
+    def validate_window(self):
+        if self.start_minute >= self.end_minute:
+            raise ValueError("Tariff window must end after it starts; split windows at midnight")
+        if not self.days or any(day not in range(7) for day in self.days):
+            raise ValueError("Tariff days must contain one or more weekday values from 0 to 6")
+        if len(set(self.days)) != len(self.days):
+            raise ValueError("Tariff days cannot contain duplicates")
+        return self
 
 
 class TariffCreate(BaseModel):
@@ -36,12 +48,44 @@ class TariffCreate(BaseModel):
     peak_rate_cents_kwh: float | None = None
     off_peak_rate_cents_kwh: float | None = None
     shoulder_rate_cents_kwh: float | None = None
+    feed_in_rate_cents_kwh: float | None = Field(default=None, ge=0)
+    periods: list[TariffPeriod] | None = None
+    effective_from: date | None = None
+    effective_to: date | None = None
+    rates_include_gst: bool = True
 
     # Demand tariff
-    demand_charge_dollars_kw: float | None = None
+    demand_charge_dollars_kw: float | None = Field(default=None, ge=0)
 
     # Supply charge
-    daily_supply_charge_cents: float = 100.0  # ~$1/day typical
+    daily_supply_charge_cents: float = Field(default=100.0, ge=0)
+
+    @model_validator(mode="after")
+    def validate_tariff(self):
+        if self.effective_from and self.effective_to and self.effective_to < self.effective_from:
+            raise ValueError("effective_to cannot be before effective_from")
+        rate_fields = (
+            self.flat_rate_cents_kwh,
+            self.peak_rate_cents_kwh,
+            self.off_peak_rate_cents_kwh,
+            self.shoulder_rate_cents_kwh,
+        )
+        if any(rate is not None and rate < 0 for rate in rate_fields):
+            raise ValueError("Tariff rates cannot be negative")
+        if self.tariff_type == TariffType.FLAT and self.flat_rate_cents_kwh is None:
+            raise ValueError("Flat tariffs require flat_rate_cents_kwh")
+        if self.periods is not None and self.tariff_type == TariffType.FLAT:
+            raise ValueError("Custom time windows require a time-of-use or flexible tariff")
+        if self.periods:
+            for day in range(7):
+                windows = sorted(
+                    (period.start_minute, period.end_minute)
+                    for period in self.periods
+                    if day in period.days
+                )
+                if any(current[0] < previous[1] for previous, current in zip(windows, windows[1:])):
+                    raise ValueError(f"Tariff windows overlap on weekday {day}")
+        return self
 
 
 class TariffResponse(BaseModel):
@@ -56,10 +100,16 @@ class TariffResponse(BaseModel):
     peak_rate_cents_kwh: float | None
     off_peak_rate_cents_kwh: float | None
     shoulder_rate_cents_kwh: float | None
+    feed_in_rate_cents_kwh: float | None
+    periods: list[TariffPeriod] | None
+    effective_from: date | None
+    effective_to: date | None
+    rates_include_gst: bool
+    is_preset: bool
     demand_charge_dollars_kw: float | None
     daily_supply_charge_cents: float
 
-    model_config = {"from_attributes": True}
+    model_config = ConfigDict(from_attributes=True)
 
 
 class TariffPreset(BaseModel):
@@ -73,7 +123,10 @@ class TariffPreset(BaseModel):
     peak_rate_cents_kwh: float | None = None
     off_peak_rate_cents_kwh: float | None = None
     shoulder_rate_cents_kwh: float | None = None
+    feed_in_rate_cents_kwh: float | None = None
     daily_supply_charge_cents: float
+    rates_include_gst: bool = True
+    is_illustrative: bool = True
 
 
 # Victorian retailer presets (approximate rates as of 2026)

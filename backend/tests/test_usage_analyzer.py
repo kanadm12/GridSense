@@ -10,6 +10,7 @@ from app.models.base import Base
 from app.models.meter import Meter
 from app.models.reading import Reading
 from app.models.user import User
+from app.services.tariff import local_interval_end_date
 from app.services.usage_analyzer import UsageAnalyzer, _ensure_date
 
 
@@ -80,13 +81,14 @@ def test_readings(db, test_meter):
         current_date = base_date + timedelta(days=day_offset)
         # Create 48 half-hour readings per day
         for half_hour in range(48):
-            timestamp = datetime.combine(
+            interval_start = datetime.combine(
                 current_date,
                 datetime.min.time()
             ) + timedelta(minutes=30 * half_hour)
+            timestamp = interval_start + timedelta(minutes=30)
             
             # Vary consumption by hour (higher during peak)
-            hour = timestamp.hour
+            hour = interval_start.hour
             if 15 <= hour < 21:  # Peak hours
                 value = 0.8 + (half_hour % 4) * 0.1
             elif hour >= 22 or hour < 7:  # Off-peak
@@ -148,7 +150,7 @@ class TestUsageAnalyzerDailyUsage:
             # Total should equal sum of TOU periods
             total_tou = day.peak_kwh + day.off_peak_kwh + day.shoulder_kwh
             assert abs(day.total_kwh - total_tou) < 0.01  # Allow small floating point diff
-            assert day.estimated_cost > 0
+            assert day.estimated_cost is None
 
     def test_get_daily_usage_empty_meter(self, db, test_meter):
         """Test getting daily usage for meter with no readings."""
@@ -156,6 +158,22 @@ class TestUsageAnalyzerDailyUsage:
         daily = analyzer.get_daily_usage(test_meter.id)
         
         assert daily == []
+
+    def test_unresolved_direction_is_not_reported_as_consumption(self, db, test_meter):
+        reading = Reading(
+            meter_id=test_meter.id,
+            timestamp=datetime.combine(date.today(), datetime.min.time()),
+            value=10.0,
+            quality="A",
+            register_type="U",
+            direction="unknown",
+        )
+        db.add(reading)
+        db.commit()
+
+        analyzer = UsageAnalyzer(db)
+        assert analyzer.get_daily_usage(test_meter.id) == []
+        assert analyzer.get_usage_summary(test_meter.id) is None
 
     def test_get_daily_usage_with_date_range(self, db, test_meter, test_readings):
         """Test getting daily usage with specific date range."""
@@ -223,8 +241,8 @@ class TestUsageAnalyzerSummary:
         assert summary.min_daily_kwh <= summary.avg_daily_kwh
         assert 0 <= summary.peak_hour < 24
         assert 0 <= summary.off_peak_percentage <= 100
-        assert summary.estimated_total_cost > 0
-        assert summary.estimated_daily_cost > 0
+        assert summary.estimated_total_cost is None
+        assert summary.estimated_daily_cost is None
 
     def test_get_usage_summary_no_readings(self, db, test_meter):
         """Test getting summary for meter with no readings."""
@@ -251,7 +269,7 @@ class TestUsageAnalyzerTOUBreakdown:
         test_date = WEEKDAY_DATE
         
         for hour in range(15, 21):  # 3pm to 9pm
-            timestamp = datetime.combine(test_date, datetime.min.time().replace(hour=hour))
+            timestamp = datetime.combine(test_date, datetime.min.time().replace(hour=hour)) + timedelta(minutes=30)
             readings.append(Reading(
                 meter_id=test_meter.id,
                 timestamp=timestamp,
@@ -277,7 +295,7 @@ class TestUsageAnalyzerTOUBreakdown:
 
         # Off-peak: 10pm-midnight and midnight-7am
         for hour in [22, 23, 0, 1, 2, 3, 4, 5, 6]:
-            timestamp = datetime.combine(test_date, datetime.min.time().replace(hour=hour))
+            timestamp = datetime.combine(test_date, datetime.min.time().replace(hour=hour)) + timedelta(minutes=30)
             readings.append(Reading(
                 meter_id=test_meter.id,
                 timestamp=timestamp,
@@ -299,7 +317,7 @@ class TestUsageAnalyzerTOUBreakdown:
     def test_tou_breakdown_with_string_date(self, db, test_meter):
         """Test TOU breakdown handles string dates (from SQLite)."""
         test_date = WEEKDAY_DATE
-        timestamp = datetime.combine(test_date, datetime.min.time().replace(hour=10))
+        timestamp = datetime.combine(test_date, datetime.min.time().replace(hour=10)) + timedelta(minutes=30)
         
         db.add(Reading(
             meter_id=test_meter.id,
@@ -325,7 +343,7 @@ class TestUsageAnalyzerTOUBreakdown:
         """
         readings = []
         for hour in range(15, 21):  # 3pm-9pm — would be peak on a weekday
-            timestamp = datetime.combine(WEEKEND_DATE, datetime.min.time().replace(hour=hour))
+            timestamp = datetime.combine(WEEKEND_DATE, datetime.min.time().replace(hour=hour)) + timedelta(minutes=30)
             readings.append(Reading(
                 meter_id=test_meter.id,
                 timestamp=timestamp,
@@ -356,7 +374,10 @@ class TestBatchTOUBreakdown:
         batch_results = analyzer._batch_tou_breakdown(test_readings)
         
         # Compare with individual results for each day
-        dates = set(r.timestamp.date() for r in test_readings)
+        dates = {
+            local_interval_end_date(r.timestamp, test_meter.state)
+            for r in test_readings
+        }
         
         for day in dates:
             individual = analyzer._get_tou_breakdown(test_meter.id, day)

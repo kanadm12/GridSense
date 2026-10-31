@@ -1,12 +1,22 @@
 /**
  * Theme constants for GridSense
+ *
+ * A single source of truth for colour, spacing, type and elevation. Screens
+ * reference these tokens rather than hard-coding values, so tuning the design
+ * language here cascades across the whole app.
  */
 
 export const Colors = {
-  // Primary - Green (energy/eco theme)
+  // Primary - Emerald (energy / eco identity)
   primary: '#10B981',
   primaryDark: '#059669',
+  primaryDarker: '#047857',
   primaryLight: '#34D399',
+  primarySoft: '#ECFDF5', // tinted surface for primary-flavoured backgrounds
+
+  // Accent - Teal (pairs with primary for gradients & highlights)
+  accent: '#0D9488',
+  accentLight: '#2DD4BF',
 
   // Secondary - Blue
   secondary: '#3B82F6',
@@ -33,20 +43,38 @@ export const Colors = {
   gray800: '#1F2937',
   gray900: '#111827',
 
-  // Background
-  background: '#F9FAFB',
+  // Background / surfaces
+  background: '#F4F6FB', // cool, slightly tinted canvas so white cards lift off it
   card: '#FFFFFF',
-  border: '#E5E7EB',
+  surfaceAlt: '#F8FAFC',
+  border: '#E9EDF3',
+  borderStrong: '#DCE2EA',
 
   // Text
-  text: '#111827',
-  textSecondary: '#6B7280',
-  textLight: '#9CA3AF',
+  text: '#0F172A',
+  textSecondary: '#64748B',
+  textLight: '#94A3B8',
+
+  // On-gradient / dark-surface text
+  onPrimary: '#FFFFFF',
 
   // Chart colors
   chartPeak: '#EF4444',
   chartOffPeak: '#10B981',
   chartShoulder: '#F59E0B',
+};
+
+/**
+ * Multi-stop gradients (consumed by expo-linear-gradient). Use `start`/`end`
+ * of {x:0,y:0} → {x:1,y:1} for the diagonal look these were tuned against.
+ */
+export const Gradients = {
+  primary: ['#10B981', '#059669'] as const, // primary buttons / CTAs
+  hero: ['#047857', '#0D9488'] as const, // emerald → teal headers
+  emeraldTeal: ['#10B981', '#0D9488'] as const, // feature stat cards
+  ocean: ['#0EA5E9', '#2563EB'] as const, // informational accents
+  sunrise: ['#FBBF24', '#F59E0B'] as const, // peak / warning accents
+  slate: ['#1E293B', '#0F172A'] as const, // dark panels
 };
 
 export const Spacing = {
@@ -59,10 +87,11 @@ export const Spacing = {
 };
 
 export const BorderRadius = {
-  sm: 4,
-  md: 8,
-  lg: 12,
-  xl: 16,
+  sm: 8,
+  md: 12,
+  lg: 16,
+  xl: 22,
+  xxl: 28,
   full: 9999,
 };
 
@@ -74,6 +103,7 @@ export const FontSize = {
   xl: 20,
   xxl: 24,
   xxxl: 32,
+  display: 40,
 };
 
 export const FontWeight = {
@@ -81,28 +111,49 @@ export const FontWeight = {
   medium: '500' as const,
   semibold: '600' as const,
   bold: '700' as const,
+  extrabold: '800' as const,
 };
 
+/**
+ * Elevation presets. On native these map to iOS shadow* + Android elevation;
+ * react-native-web translates the shadow* props to box-shadow. Kept soft and
+ * diffuse for a modern, layered feel.
+ */
 export const Shadow = {
   sm: {
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 1,
-  },
-  md: {
-    shadowColor: '#000',
+    shadowColor: '#0F172A',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
+    shadowOpacity: 0.06,
+    shadowRadius: 6,
     elevation: 2,
   },
+  md: {
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.08,
+    shadowRadius: 16,
+    elevation: 5,
+  },
   lg: {
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 8,
-    elevation: 4,
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 12 },
+    shadowOpacity: 0.12,
+    shadowRadius: 24,
+    elevation: 9,
+  },
+  xl: {
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 18 },
+    shadowOpacity: 0.16,
+    shadowRadius: 32,
+    elevation: 14,
+  },
+  /** Coloured glow used under primary/gradient hero cards. */
+  primaryGlow: {
+    shadowColor: '#059669',
+    shadowOffset: { width: 0, height: 12 },
+    shadowOpacity: 0.35,
+    shadowRadius: 22,
+    elevation: 10,
   },
 };

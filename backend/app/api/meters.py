@@ -45,6 +45,7 @@ async def create_meter(
         user_id=current_user.id,
         nmi=meter_data.nmi,
         meter_serial=meter_data.meter_serial,
+        register_id=meter_data.register_id,
         suffix=meter_data.suffix,
         unit_of_measure=meter_data.unit_of_measure,
         interval_minutes=meter_data.interval_minutes,

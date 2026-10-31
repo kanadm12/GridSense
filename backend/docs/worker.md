@@ -1,37 +1,54 @@
 # Running the RQ worker (development)
 
-This project includes a lightweight RQ-based worker proof-of-concept to run NEM12 import jobs outside the FastAPI process.
+The RQ worker runs NEM12 imports outside the FastAPI process. API startup and
+the core demo do not require Redis; the Compose API service can start without
+the Redis service.
 
-Prerequisites:
-- Docker (recommended) or a local Redis instance.
+## Start the worker
 
-Start Redis with Docker:
+The worker requires a reachable Redis instance. From the repository root:
 
-```bash
-# start Redis in background
-docker run -d --name gridsense-redis -p 6379:6379 redis:7
+```powershell
+docker compose up -d redis
+Push-Location backend
+..\.venv311\Scripts\python.exe -m app.worker
+Pop-Location
 ```
 
-Start an RQ worker from the project root:
+The worker consumes the `default` queue. For a local Redis installation, set
+`REDIS_URL` to the reachable server before starting the API and worker.
 
-```bash
-# Activate virtualenv, then
-python -m app.worker
-```
+## Idempotency and recovery
 
-Or run using `rq` CLI (requires `rq` installed in the env):
+- An upload's SHA-256 hash is unique per user. Repeated content returns the
+ existing upload rather than creating a second import record.
+- A failed RQ job can be retried by submitting the same file again. The API
+ reuses its upload row when the queue reports a terminal failure.
+- Import retries skip meter timestamps already committed by an earlier attempt,
+ so a worker interruption after a committed chunk does not duplicate those
+ readings.
+- Optional alert publication and ML-training enqueue failures are logged and do
+ not convert a successfully imported file into a failed import.
 
-```bash
-# from backend/ directory
-rq worker default --url redis://localhost:6379/0
-```
+## Redis-unavailable fallback and its durability risk
 
-Notes:
-- The upload endpoint will attempt to enqueue jobs in Redis; if Redis is not available, it falls back to FastAPI `BackgroundTasks` and processes imports in-process.
-- The upload status endpoint now returns `rq_job_id` and `rq_job_status` when available.
+If RQ enqueue fails, FastAPI runs the import as an in-process background task
+with its own database session. This avoids reusing the request-scoped session
+and lets a small local demo continue without Redis. The fallback is **not
+durable**: a process restart can interrupt it, and there is no persistent
+outbox or automatic recovery if the process dies before the upload row is
+updated. Use Redis/RQ for long-running or production imports. A repeated upload
+can retry a failed queue job; it cannot prove or recover work lost by an
+in-process process crash.
 
-Cleanup Redis container:
+The status endpoint returns `rq_job_status: "unavailable"` when the job state
+cannot be checked because Redis is unavailable; this is distinct from a missing
+or failed job.
 
-```bash
-docker stop gridsense-redis && docker rm gridsense-redis
-```
+## Operational checks
+
+The unit test suite covers duplicate requests, a failed RQ job retry, a
+Redis-unavailable fallback with an independent session, and an importer
+interruption after a committed chunk followed by a deduplicating retry. A real
+Compose worker-kill/restart check must still be run in staging when Docker and
+Redis are available.

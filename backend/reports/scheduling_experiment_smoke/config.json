@@ -1,0 +1,49 @@
+{
+  "experiment": "synthetic_scheduling_strategy_comparison",
+  "design": {
+    "seed": 20261031,
+    "household_count": 1,
+    "flexibility_hours": [
+      2,
+      6,
+      10
+    ],
+    "forecast_error_spread_fractions": [
+      0.0,
+      0.5
+    ],
+    "appliance_mixes": [
+      "light",
+      "mixed"
+    ],
+    "tariff_spread_factors": [
+      0.0,
+      1.0
+    ]
+  },
+  "strategies": {
+    "S0_no_intervention": "Run each task at its original preferred start.",
+    "S1_rule_based": "Use the scheduling service deterministic greedy reference against announced tariff periods.",
+    "S2_forecast_milp": "Use the service MILP with noisy day-ahead realized-price estimates.",
+    "oracle": "Use the same MILP with realized interval prices (perfect information)."
+  },
+  "synthetic_assumptions": {
+    "households": 1,
+    "household_profiles": "Generated baseline shapes; no customer data.",
+    "tariff": "Synthetic AUD energy-only TOU profile; no supply or demand charges.",
+    "realized_price_noise_sd_aud_per_kwh": "0.025 * tariff_spread_factor",
+    "forecast_error_sd_aud_per_kwh": "0.25 * forecast_error_spread_fraction * tariff_spread_factor",
+    "appliance_profiles": "Fixed power and duration task assumptions in source.",
+    "household_power_limit_kw": 8.0,
+    "preference_penalty_aud_per_interval": 0.01,
+    "simulation_date": "2026-03-02",
+    "timezone": "Australia/Melbourne",
+    "interval_minutes": 30,
+    "solver": "SciPy 1.17.1 milp (HiGHS backend)",
+    "numpy_version": "2.4.6",
+    "platform": "Windows-10-10.0.26200-SP0"
+  },
+  "case_count": 24,
+  "result_rows": 96,
+  "seed": 20261031
+}

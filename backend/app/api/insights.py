@@ -165,7 +165,7 @@ async def get_daily_brief(
             yesterday_cost = daily_usage[0].estimated_cost
         else:
             yesterday_kwh = 0.0
-            yesterday_cost = 0.0
+            yesterday_cost = None
 
         # Get 30-day average for comparison
         thirty_days_ago = date.today() - timedelta(days=30)
@@ -238,7 +238,10 @@ async def get_daily_brief(
         # Get forecast message
         try:
             forecast = forecaster.forecast_monthly_bill(meter.id)
-            forecast_msg = f"Projected bill this month: ${forecast['projected_total_cost']:.0f}"
+            forecast_msg = (
+                f"Projected usage this month: {forecast['projected_total_kwh']:.0f} kWh. "
+                "Cost projection is unavailable without tariff-backed pricing."
+            )
         except Exception:
             forecast_msg = None
 
@@ -246,7 +249,9 @@ async def get_daily_brief(
             date=str(date.today()),
             greeting=greeting,
             yesterday_usage_kwh=round(yesterday_kwh, 2),
-            yesterday_cost=round(yesterday_cost, 2),
+            yesterday_cost=(
+                round(yesterday_cost, 2) if yesterday_cost is not None else None
+            ),
             comparison_to_average=round(comparison, 1),
             insights=insights,
             forecast_message=forecast_msg,

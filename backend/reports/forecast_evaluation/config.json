@@ -1,0 +1,36 @@
+{
+  "dataset_url": "https://archive.ics.uci.edu/static/public/235/individual+household+electric+power+consumption.zip",
+  "dataset_file": "household_power_consumption.txt",
+  "dataset_sha256": "4259c9d7ece5dbee9ab8d53682baac68d791c864f0f64a52b4043cb3b90894b7",
+  "archive_sha256": "9f84b46ade8a2d8e1286ec4b2b6c2987a45a755c59f263be3b3b3d10dfbda3ff",
+  "dataset_timezone": "Europe/Paris",
+  "household_id": "uci_sceaux_household_1",
+  "target": "daily_kwh_from_global_active_power",
+  "minimum_daily_coverage": 0.99,
+  "split": {
+    "train_end": "2009-09-19",
+    "validation_start": "2009-09-20",
+    "validation_end": "2010-04-23",
+    "test_start": "2010-04-24",
+    "test_end": "2010-11-26"
+  },
+  "forecast_horizons_days": [
+    1,
+    7,
+    14
+  ],
+  "rolling_origin_step_days": 7,
+  "random_seed": 42,
+  "prophet": {
+    "implementation": "1.4.0",
+    "uncertainty_samples": 200
+  },
+  "versions": {
+    "numpy": "2.4.6",
+    "pandas": "3.0.5",
+    "matplotlib": "3.11.1",
+    "scikit_learn": "1.9.0"
+  },
+  "prediction_rows": 504,
+  "metrics_rows": 72
+}

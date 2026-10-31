@@ -70,6 +70,33 @@ export interface Meter {
   created_at: string;
 }
 
+export interface TariffPeriodV1 {
+  name: string;
+  start_minute: number;
+  end_minute: number;
+  rate_cents_kwh: number;
+  days: number[];
+}
+
+export interface UserTariff {
+  id: number;
+  user_id: number;
+  tariff_type: 'flat' | 'tou' | 'demand' | 'flexible';
+  retailer_name: string | null;
+  flat_rate_cents_kwh: number | null;
+  peak_rate_cents_kwh: number | null;
+  off_peak_rate_cents_kwh: number | null;
+  shoulder_rate_cents_kwh: number | null;
+  feed_in_rate_cents_kwh: number | null;
+  periods: TariffPeriodV1[] | null;
+  effective_from: string | null;
+  effective_to: string | null;
+  rates_include_gst: boolean;
+  is_preset: boolean;
+  demand_charge_dollars_kw: number | null;
+  daily_supply_charge_cents: number;
+}
+
 export interface DailyUsage {
   date: string;
   total_kwh: number;
@@ -108,8 +135,8 @@ export interface UsageSummary {
   peak_hour: number;
   peak_avg_kwh: number;
   off_peak_percentage: number;
-  estimated_total_cost: number;
-  estimated_daily_cost: number;
+  estimated_total_cost: number | null;
+  estimated_daily_cost: number | null;
 }
 
 export interface Recommendation {
@@ -122,11 +149,143 @@ export interface Recommendation {
   potential_savings_dollars: number | null;
   action: string;
   reason: string;
+  observed_fact: string;
+  proposed_action: string;
+  conditional_opportunity: string;
+  estimate_status: 'unquantified' | 'conditional_estimate';
+  baseline: string;
+  assumptions: string[];
+  rate_difference_cents_kwh: number | null;
+  applicable_intervals: string;
+  uncertainty: string;
+  confidence: 'low' | 'medium' | 'high';
+  data_requirements: string[];
 }
 
 export interface RecommendationsResponse {
   recommendations: Recommendation[];
   total_potential_savings: number | null;
+  tariff_status:
+    | 'missing'
+    | 'illustrative'
+    | 'outside_effective_dates'
+    | 'missing_rates'
+    | 'configured';
+}
+
+export interface BaselineIntervalV1 {
+  interval_start: string;
+  demand_kw: number;
+}
+
+export type FixedBaselineProfileV1 =
+  | {
+      source: 'synthetic';
+      profile_id: string;
+      measurement_method: null;
+      scenario_id: string;
+      includes_scheduled_tasks: false;
+      intervals: BaselineIntervalV1[];
+    }
+  | {
+      source: 'independently_measured';
+      profile_id: string;
+      measurement_method: 'submeter' | 'validated_disaggregation';
+      scenario_id?: string | null;
+      includes_scheduled_tasks: false;
+      intervals: BaselineIntervalV1[];
+    };
+
+export interface ApplianceTaskV1Fields {
+  task_id: string;
+  appliance: string;
+  duration_minutes: number;
+  earliest_start: string;
+  deadline: string;
+  preferred_start: string | null;
+}
+
+type ApplianceTaskEnergyV1 =
+  | { rated_power_kw: number; energy_kwh?: null }
+  | { rated_power_kw?: null; energy_kwh: number };
+
+export type ApplianceTaskV1 = ApplianceTaskV1Fields &
+  ApplianceTaskEnergyV1 &
+  { mandatory: boolean; omission_penalty_aud?: number | null };
+
+export interface SchedulingRequestV1 {
+  schema_version: '1.0';
+  meter_id: number;
+  tariff_id?: number | null;
+  scenario_id: string;
+  interval_minutes: 5 | 15 | 30 | 60;
+  timezone: string;
+  currency: 'AUD';
+  preference_penalty_aud_per_interval?: number;
+  household_power_limit_kw?: number | null;
+  grid_power_limit_kw?: number | null;
+  tasks: ApplianceTaskV1[];
+  baseline_profile: FixedBaselineProfileV1;
+}
+
+export type SchedulingStatusV1 =
+  | 'blocked'
+  | 'not_evaluated'
+  | 'feasible'
+  | 'infeasible'
+  | 'timeout';
+export type TariffResolutionStatusV1 =
+  | 'configured'
+  | 'missing'
+  | 'illustrative'
+  | 'outside_effective_dates'
+  | 'missing_rates';
+
+export interface ScheduledTaskV1 {
+  task_id: string;
+  start?: string | null;
+  end?: string | null;
+  power_kw: number | null;
+  energy_kwh: number | null;
+  omitted: boolean;
+}
+
+export interface ScheduleV1 {
+  status: 'feasible' | 'not_found';
+  method: 'milp' | 'deterministic_greedy';
+  reason?: string | null;
+  tasks: ScheduledTaskV1[];
+  total_energy_kwh: number | null;
+  total_cost_aud: number | null;
+}
+
+export interface SchedulingResponseV1 {
+  schema_version: '1.0';
+  scenario_id: string;
+  meter_id: number;
+  status: SchedulingStatusV1;
+  tariff: {
+    tariff_id?: number | null;
+    status: TariffResolutionStatusV1;
+    currency: 'AUD';
+  };
+  objective_breakdown?: {
+    currency: 'AUD';
+    baseline_energy_cost_aud?: number | null;
+    candidate_energy_cost_aud?: number | null;
+    reference_energy_cost_aud?: number | null;
+    energy_cost_delta_aud?: number | null;
+    preference_penalty_aud?: number | null;
+    omission_penalty_aud?: number | null;
+    total_objective_aud?: number | null;
+    reference_preference_penalty_aud?: number | null;
+    reference_omission_penalty_aud?: number | null;
+    reference_objective_aud?: number | null;
+  } | null;
+  candidate_schedule?: ScheduleV1 | null;
+  reference_schedule?: ScheduleV1 | null;
+  assumptions: string[];
+  blockers: string[];
 }
 
 export interface UploadResponse {
@@ -188,6 +347,11 @@ let failedQueue: Array<{
   resolve: (token: string) => void;
   reject: (error: unknown) => void;
 }> = [];
+let authExpiredHandler: (() => void) | null = null;
+
+export const setAuthExpiredHandler = (handler: (() => void) | null) => {
+  authExpiredHandler = handler;
+};
 
 const processQueue = (error: unknown, token: string | null = null) => {
   failedQueue.forEach((prom) => {
@@ -225,10 +389,15 @@ api.interceptors.request.use(
 api.interceptors.response.use(
   (response) => response,
   async (error: AxiosError<ApiError>) => {
-    const originalRequest = error.config as InternalAxiosRequestConfig & { _retry?: boolean };
+    const originalRequest = error.config as
+      | (InternalAxiosRequestConfig & { _retry?: boolean })
+      | undefined;
+    const isAuthRequest = ['/auth/login', '/auth/register', '/auth/refresh'].some((path) =>
+      originalRequest?.url?.endsWith(path)
+    );
 
     // If 401 and we haven't tried to refresh yet
-    if (error.response?.status === 401 && !originalRequest._retry) {
+    if (error.response?.status === 401 && originalRequest && !isAuthRequest && !originalRequest._retry) {
       if (isRefreshing) {
         // Wait for the refresh to complete
         return new Promise((resolve, reject) => {
@@ -267,6 +436,7 @@ api.interceptors.response.use(
         // Clear tokens and let the app handle re-authentication
         await removeToken();
         await removeRefreshToken();
+        authExpiredHandler?.();
         return Promise.reject(refreshError);
       } finally {
         isRefreshing = false;
@@ -361,6 +531,13 @@ export const metersApi = {
 
   delete: async (meterId: number) => {
     await api.delete(`/meters/${meterId}`);
+  },
+};
+
+export const tariffsApi = {
+  getMine: async () => {
+    const response = await api.get<UserTariff | null>('/tariffs');
+    return response.data;
   },
 };
 
@@ -466,6 +643,16 @@ export const recommendationsApi = {
 
   getAll: async () => {
     const response = await api.get<RecommendationsResponse>('/recommendations');
+    return response.data;
+  },
+};
+
+export const schedulingApi = {
+  previewV1: async (request: SchedulingRequestV1) => {
+    const response = await api.post<SchedulingResponseV1>(
+      '/scheduling/v1/plans/preview',
+      request
+    );
     return response.data;
   },
 };

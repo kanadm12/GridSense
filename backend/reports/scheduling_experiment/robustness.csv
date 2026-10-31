@@ -1,0 +1,6 @@
+case,status,error_type,error_message,candidate_status,greedy_status,candidate_energy_cost_aud,greedy_energy_cost_aud,greedy_energy_cost_gap_aud
+single_slot_window_cap_conflict,infeasible,,,,not_found,,,
+power_cap_conflict,infeasible,,,,not_found,,,
+baseline_over_cap,infeasible,,,,not_found,,,
+greedy_suboptimal,feasible,,,feasible,feasible,5.1,10.05,-4.950000000000001
+injected_solver_failure,solver_error,RuntimeError,RuntimeError: Injected solver failure for fault-containment test,,,,,

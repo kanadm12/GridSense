@@ -1,5 +1,7 @@
 """Background tasks for RQ worker processing."""
+
 import asyncio
+import logging
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -18,6 +20,7 @@ from app.services.automation_provider import AutomationProviderError, get_automa
 from app.services.nem12_importer import NEM12Importer
 
 settings = get_settings()
+logger = logging.getLogger(__name__)
 
 
 def get_redis_conn() -> Redis:
@@ -33,15 +36,19 @@ def enqueue_import(content: bytes, user_id: int, filename: Optional[str], upload
 
 
 def get_job_status(job_id: str) -> Optional[str]:
-    """Return RQ job status string, or None if not found/Redis unavailable."""
+    """Return RQ status, `unavailable` if Redis cannot be queried, or None if missing."""
     try:
         from rq.job import Job
 
         conn = get_redis_conn()
         job = Job.fetch(job_id, connection=conn)
         return job.get_status()
-    except Exception:
-        return None
+    except Exception as exc:
+        logger.warning(
+            "Unable to retrieve RQ job status",
+            extra={"error_type": type(exc).__name__},
+        )
+        return "unavailable"
 
 
 def enqueue_automation_rule(rule_id: int) -> str:
@@ -138,9 +145,7 @@ def enqueue_ml_training(meter_id: int) -> Optional[str]:
         from app.services.ml_training_service import MINIMUM_TRAINING_DAYS, MLTrainingService
 
         days_available = (
-            db.query(DailyAggregate)
-            .filter(DailyAggregate.meter_id == meter_id)
-            .count()
+            db.query(DailyAggregate).filter(DailyAggregate.meter_id == meter_id).count()
         )
         if days_available < MINIMUM_TRAINING_DAYS:
             return None
@@ -191,6 +196,7 @@ def train_meter_models_task(training_job_id: int, meter_id: int, job_type: str =
             # Notify user of successful training
             try:
                 from app.services.alert_service import notify_training_completion
+
                 meter = db.query(Meter).get(meter_id)
                 if meter:
                     notify_training_completion(db, meter.user_id, meter_id, True, successful_models)
@@ -267,8 +273,9 @@ def import_nem12_task(
     This function creates its own DB session and updates the upload record status.
     """
     db = SessionLocal()
+    upload = None
     try:
-        upload = db.query(NEM12Upload).get(upload_id)
+        upload = db.get(NEM12Upload, upload_id)
         if upload:
             upload.status = "processing"
             db.add(upload)
@@ -291,14 +298,34 @@ def import_nem12_task(
                     Meter.user_id == user_id,
                     Meter.nmi == meter_data.nmi,
                     Meter.suffix == (meter_data.suffix or ""),
+                    Meter.register_id == meter_data.register_id,
                 )
                 .first()
             )
             if meter:
-                alerts_published += publish_after_import(db, user_id, meter.id)
+                try:
+                    alerts_published += publish_after_import(db, user_id, meter.id)
+                except Exception as exc:
+                    logger.warning(
+                        "Post-import alert publication failed",
+                        extra={
+                            "upload_id": upload_id,
+                            "meter_id": meter.id,
+                            "error_type": type(exc).__name__,
+                        },
+                    )
 
-                # Training is optional and only starts once enough daily data exists.
-                enqueue_ml_training(meter.id)
+                try:
+                    enqueue_ml_training(meter.id)
+                except Exception as exc:
+                    logger.warning(
+                        "Optional meter training could not be queued",
+                        extra={
+                            "upload_id": upload_id,
+                            "meter_id": meter.id,
+                            "error_type": type(exc).__name__,
+                        },
+                    )
 
         return {
             "status": "completed",
@@ -306,11 +333,17 @@ def import_nem12_task(
             "alerts_published": alerts_published,
         }
     except Exception as exc:
-        if upload:
-            upload.status = "failed"
-            upload.errors = str(exc)
-            db.add(upload)
+        db.rollback()
+        failed_upload = db.get(NEM12Upload, upload_id)
+        if failed_upload is not None:
+            failed_upload.status = "failed"
+            failed_upload.errors = "Import failed; retry the upload."
+            db.add(failed_upload)
             db.commit()
+        logger.error(
+            "Queued NEM12 import failed",
+            extra={"upload_id": upload_id, "error_type": type(exc).__name__},
+        )
         raise
     finally:
         db.close()

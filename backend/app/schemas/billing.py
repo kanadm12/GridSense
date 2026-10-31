@@ -1,7 +1,40 @@
 """Bill comparison schemas."""
 
 from datetime import date
+
 from pydantic import BaseModel
+
+
+class BillLineItem(BaseModel):
+    """A rounded billing component; GST memorandum lines are not added to total."""
+
+    label: str
+    quantity_kwh: float | None = None
+    rate_cents_kwh: float | None = None
+    amount: float
+    included_in_total: bool = True
+
+
+class BillPeriodBreakdown(BaseModel):
+    """Transparent estimate for one requested meter period."""
+
+    start_date: date
+    end_date: date
+    estimate_type: str
+    tariff_status: str
+    data_status: str
+    gst_treatment: str
+    import_kwh: float
+    export_kwh: float
+    unresolved_reading_count: int
+    expected_interval_count: int
+    observed_interval_count: int
+    missing_interval_count: int
+    unpriced_interval_count: int
+    gst_amount: float
+    total_cost: float
+    line_items: list[BillLineItem]
+    limitations: list[str]
 
 
 class PeriodComparison(BaseModel):
@@ -25,13 +58,13 @@ class PeriodComparison(BaseModel):
 
     # Changes
     kwh_change: float  # Absolute change
-    kwh_change_percent: float
+    kwh_change_percent: float | None
     cost_change: float
-    cost_change_percent: float
-    daily_avg_change_percent: float
+    cost_change_percent: float | None
+    daily_avg_change_percent: float | None
 
     # Insights
-    trend: str  # "up", "down", "stable"
+    trend: str  # "up", "down", "stable", or "unavailable"
     insight: str  # Human-readable insight
 
 
@@ -42,3 +75,5 @@ class BillComparisonResponse(BaseModel):
     meter_name: str | None
     comparison: PeriodComparison
     recommendations: list[str]
+    current_breakdown: BillPeriodBreakdown
+    previous_breakdown: BillPeriodBreakdown

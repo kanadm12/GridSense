@@ -21,6 +21,7 @@ from app.api import (
     notifications_router,
     password_reset_router,
     recommendations_router,
+    scheduling_router,
     tariffs_router,
     upload_router,
     usage_router,
@@ -107,6 +108,7 @@ app.include_router(tariffs_router, prefix=settings.api_v1_prefix)
 app.include_router(billing_router, prefix=settings.api_v1_prefix)
 app.include_router(notifications_router, prefix=settings.api_v1_prefix)
 app.include_router(automation_router, prefix=settings.api_v1_prefix)
+app.include_router(scheduling_router, prefix=settings.api_v1_prefix)
 app.include_router(chat_router, prefix=settings.api_v1_prefix)
 app.include_router(insights_router, prefix=settings.api_v1_prefix)
 

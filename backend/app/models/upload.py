@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from sqlalchemy import Integer, String, DateTime, ForeignKey, Text
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, TimestampMixin
@@ -30,6 +30,15 @@ class NEM12Upload(Base, TimestampMixin):
     processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     user = relationship("User", backref="nem12_uploads")
+
+    __table_args__ = (
+        Index(
+            "uq_nem12_upload_user_file_hash",
+            "user_id",
+            "file_hash",
+            unique=True,
+        ),
+    )
 
     def __repr__(self) -> str:
         return f"<NEM12Upload(id={self.id}, filename={self.filename}, status={self.status})>"

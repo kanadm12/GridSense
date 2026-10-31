@@ -1,11 +1,12 @@
 """AI Assistant service for natural language energy queries."""
 
+import logging
 import os
 from datetime import date, timedelta
-from typing import Any
 
 try:
     from openai import OpenAI
+
     HAS_OPENAI = True
 except ImportError:
     HAS_OPENAI = False
@@ -14,6 +15,8 @@ from sqlalchemy.orm import Session
 
 from app.services.rag_engine import get_rag_engine
 from app.services.usage_analyzer import UsageAnalyzer
+
+logger = logging.getLogger(__name__)
 
 
 SYSTEM_PROMPT = """You are GridSense, an AI energy assistant for Victorian households in Australia. 
@@ -29,16 +32,15 @@ Your expertise includes:
 Guidelines:
 - Be concise but helpful (2-3 paragraphs max unless asked for detail)
 - Use Australian English spelling
-- Reference actual usage data when available
+- Describe interval readings as observed imports, not as appliance-level facts
+- Reference actual usage data when available and distinguish it from inferences
 - Provide specific, actionable advice
 - Mention Victorian government rebates when relevant
-- Always consider the time-of-use periods: Peak (3-9pm), Shoulder (7am-3pm, 9pm-10pm), Off-Peak (10pm-7am)
-
-When discussing costs, use these typical Victorian rates:
-- Peak: ~38c/kWh
-- Shoulder: ~25c/kWh
-- Off-Peak: ~18c/kWh
-- Daily supply: ~$1.20/day
+- Shared GridSense time windows are examples, not proof of a user's retailer tariff.
+- Do not invent rates, bills, or dollar savings.
+- Discuss money only when a verified configured tariff is explicitly in context.
+- Chat is explanatory guidance, not an authoritative bill.
+- Direct users to tariff and bill comparison screens for estimates, not retailer-issued bills.
 """
 
 
@@ -66,59 +68,60 @@ class AIAssistant:
     def _get_usage_context(self, user_id: int, meter_id: int | None = None) -> str:
         """Get user's recent usage data for context."""
         from app.models.meter import Meter
-        
+
         # Get user's meter if not specified
         if meter_id is None:
-            meter = self.db.query(Meter).filter(
-                Meter.user_id == user_id,
-                Meter.is_active == True
-            ).first()
+            meter = (
+                self.db.query(Meter)
+                .filter(Meter.user_id == user_id, Meter.is_active == True)
+                .first()
+            )
             if not meter:
                 return "No meter data available for this user."
             meter_id = meter.id
 
         analyzer = UsageAnalyzer(self.db)
-        
+
         # Get last 7 days of usage
         end_date = date.today()
         start_date = end_date - timedelta(days=7)
-        
+
         try:
             daily_usage = analyzer.get_daily_usage(
-                meter_id=meter_id,
-                start_date=start_date,
-                end_date=end_date,
-                limit=7
+                meter_id=meter_id, start_date=start_date, end_date=end_date, limit=7
             )
-            
+
             if not daily_usage:
                 return "No recent usage data available."
 
             # Build context string
             total_kwh = sum(d.total_kwh for d in daily_usage)
-            total_cost = sum(d.estimated_cost for d in daily_usage)
             avg_daily = total_kwh / len(daily_usage)
-            
+
             # Get TOU breakdown from summary
             summary = analyzer.get_usage_summary(meter_id, start_date, end_date)
-            
+
             context = f"""User's Recent Energy Usage (last 7 days):
 - Total consumption: {total_kwh:.1f} kWh
-- Total estimated cost: ${total_cost:.2f}
 - Average daily usage: {avg_daily:.1f} kWh/day
-- Peak usage: {summary.tou_breakdown.get('peak', 0):.1f} kWh ({summary.tou_breakdown.get('peak', 0)/total_kwh*100:.0f}%)
-- Shoulder usage: {summary.tou_breakdown.get('shoulder', 0):.1f} kWh
-- Off-Peak usage: {summary.tou_breakdown.get('off_peak', 0):.1f} kWh
+- Peak usage: {summary.tou_breakdown.get("peak", 0):.1f} kWh
+  ({summary.tou_breakdown.get("peak", 0) / total_kwh * 100:.0f}%)
+- Shoulder usage: {summary.tou_breakdown.get("shoulder", 0):.1f} kWh
+- Off-Peak usage: {summary.tou_breakdown.get("off_peak", 0):.1f} kWh
 
 Daily breakdown:
 """
             for d in daily_usage[-5:]:  # Last 5 days
-                context += f"- {d.date}: {d.total_kwh:.1f} kWh (${d.estimated_cost:.2f})\n"
+                context += f"- {d.date}: {d.total_kwh:.1f} kWh\n"
 
             return context
 
-        except Exception as e:
-            return f"Error fetching usage data: {str(e)}"
+        except Exception as exc:
+            logger.warning(
+                "Unable to build assistant usage context",
+                extra={"meter_id": meter_id, "error_type": type(exc).__name__},
+            )
+            return "Usage context is temporarily unavailable."
 
     async def chat(
         self,
@@ -162,10 +165,9 @@ USER'S DATA:
         # Add conversation history
         if conversation_history:
             for msg in conversation_history[-6:]:  # Last 6 messages for context
-                messages.append({
-                    "role": msg.get("role", "user"),
-                    "content": msg.get("content", "")
-                })
+                messages.append(
+                    {"role": msg.get("role", "user"), "content": msg.get("content", "")}
+                )
 
         # Add current message
         messages.append({"role": "user", "content": message})
@@ -181,18 +183,18 @@ USER'S DATA:
                     temperature=0.7,
                 )
                 return response.choices[0].message.content
-            except Exception as e:
-                print(f"OpenAI API error: {e}")
+            except Exception as exc:
+                logger.warning(
+                    "OpenAI request failed; using local assistant fallback",
+                    extra={"error_type": type(exc).__name__},
+                )
                 # Fall through to rule-based response
 
         # Fallback: Rule-based response
         return self._generate_fallback_response(message, usage_context, rag_context)
 
     def _generate_fallback_response(
-        self,
-        message: str,
-        usage_context: str,
-        rag_context: list[str]
+        self, message: str, usage_context: str, rag_context: list[str]
     ) -> str:
         """Generate a rule-based response when AI is unavailable."""
         message_lower = message.lower()
@@ -200,21 +202,28 @@ USER'S DATA:
         # Bill/cost related queries
         if any(word in message_lower for word in ["bill", "cost", "expensive", "high", "save"]):
             tips = self.rag_engine.get_savings_tips("general")
-            return f"""Based on Victorian energy rates, here are some ways to reduce your bill:
+            return f"""Here are general energy-use ideas to consider.
+They are not a bill calculation or prediction of your savings:
 
-{chr(10).join(f'• {tip}' for tip in tips)}
+{chr(10).join(f"• {tip}" for tip in tips)}
 
 {usage_context}
 
-The biggest savings come from shifting usage to off-peak hours (10pm-7am) and reducing peak usage (3pm-9pm weekdays)."""
+I can't quantify a cost change without your current tariff and a specific flexible load.
+Use your tariff settings and bill comparison for an estimate; it is not a retailer-issued bill."""
 
         # Usage/consumption queries
-        if any(word in message_lower for word in ["usage", "consumption", "used", "yesterday", "today", "week"]):
-            return f"""Here's a summary of your energy usage:
+        if any(
+            word in message_lower
+            for word in ["usage", "consumption", "used", "yesterday", "today", "week"]
+        ):
+            return f"""Here's a summary of your observed energy use:
 
 {usage_context}
 
-Victorian average household usage is about 11-14 kWh per day. If you're above this, consider running appliances during off-peak hours."""
+Interval totals do not identify individual appliances.
+Compare changes with your own history; a general usage figure is not a diagnosis
+of inefficiency."""
 
         # Solar queries
         if "solar" in message_lower:
@@ -228,24 +237,20 @@ Victorian average household usage is about 11-14 kWh per day. If you're above th
 • Up to $2,950 off battery storage
 • Interest-free loans available
 
-A typical 6.6kW system can offset most daytime usage and export excess to the grid (feed-in tariff ~5-10c/kWh).
+Solar generation, self-consumption, and export value depend on the installed
+system and the user's actual tariff. Interval imports alone cannot establish those values.
 
 Would you like tips on maximizing solar value?"""
 
         # Peak/off-peak queries
         if any(word in message_lower for word in ["peak", "off-peak", "when", "best time"]):
-            return """**Victorian Time-of-Use Periods:**
+            return """**Example GridSense time windows** (local times; check your retailer plan):
 
-⚡ **Peak** (3pm-9pm weekdays): ~38c/kWh
-   Avoid running heavy appliances
+Peak is often represented as 3pm-9pm on weekdays, shoulder as 7am-3pm and 9pm-10pm,
+and off-peak as 10pm-7am and weekends. Actual retailer windows and rates can differ.
 
-📊 **Shoulder** (7am-3pm, 9pm-10pm weekdays): ~25c/kWh
-   OK for moderate usage
-
-🌙 **Off-Peak** (10pm-7am + all weekends): ~18c/kWh
-   Best time for dishwasher, washing machine, EV charging
-
-**Pro tip:** Set timers on appliances to start at 10pm!"""
+These intervals alone do not establish that an appliance can be shifted or that doing
+so would save money. Check your configured tariff and the appliance's requirements."""
 
         # Default response with context
         context_snippet = rag_context[0] if rag_context else ""

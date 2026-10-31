@@ -144,15 +144,15 @@ class DeviceSchedule(BaseModel):
 
 
 class AutomationSuggestion(BaseModel):
-    """Suggested automation based on usage patterns."""
+    """Illustrative automation scenario; savings are not quantified."""
     device_type: str
     suggestion_title: str
     description: str
-    potential_savings_kwh: float
-    potential_savings_dollars: float
+    potential_savings_kwh: float | None = None
+    potential_savings_dollars: float | None = None
     trigger_type: str
     recommended_schedule: dict[str, Any]
-    confidence: float = Field(..., ge=0, le=1)
+    confidence: float | None = Field(default=None, ge=0, le=1)
 
 
 class GridSignal(BaseModel):

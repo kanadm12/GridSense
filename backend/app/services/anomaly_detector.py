@@ -10,6 +10,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models.reading import Reading
+from app.models.reading import consumption_reading_filter
 from app.services.tariff import (
     DEFAULT_OFF_PEAK_RATE,
     DEFAULT_PEAK_RATE,
@@ -69,6 +70,7 @@ class AnomalyDetector:
             )
             .filter(
                 Reading.meter_id == meter_id,
+                consumption_reading_filter(),
                 Reading.timestamp >= start_date,
                 Reading.timestamp <= end_date,
             )
@@ -131,6 +133,7 @@ class AnomalyDetector:
             self.db.query(Reading)
             .filter(
                 Reading.meter_id == meter_id,
+                consumption_reading_filter(),
                 Reading.timestamp >= start_date,
                 Reading.timestamp <= end_date,
             )
@@ -196,6 +199,7 @@ class AnomalyDetector:
             self.db.query(Reading)
             .filter(
                 Reading.meter_id == meter_id,
+                consumption_reading_filter(),
                 Reading.timestamp >= start_date,
                 Reading.timestamp <= end_date,
             )
@@ -212,7 +216,11 @@ class AnomalyDetector:
                 daily_usage[day]["total"] += r.value
 
                 # Peak is 3pm-9pm on weekdays (shared Victorian ToU definition)
-                if is_peak(r.timestamp):
+                if is_peak(
+                    r.timestamp,
+                    interval_minutes=r.interval_minutes,
+                    state=r.meter.state,
+                ):
                     daily_usage[day]["peak"] += r.value
 
         anomalies = []

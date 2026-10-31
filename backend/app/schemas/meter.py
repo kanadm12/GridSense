@@ -10,6 +10,7 @@ class MeterCreate(BaseModel):
 
     nmi: str = Field(..., min_length=10, max_length=10)
     meter_serial: str | None = None
+    register_id: str | None = Field(None, max_length=10)
     suffix: str | None = Field(None, max_length=2)
     unit_of_measure: str = "kWh"
     interval_minutes: int = 30
@@ -24,6 +25,7 @@ class MeterResponse(BaseModel):
     id: int
     nmi: str
     meter_serial: str | None
+    register_id: str | None
     suffix: str | None
     unit_of_measure: str
     interval_minutes: int

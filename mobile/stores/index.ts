@@ -3,6 +3,7 @@
  */
 
 import { create } from 'zustand';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   User,
   Meter,
@@ -18,6 +19,7 @@ import {
   removeToken,
   removeRefreshToken,
   getErrorMessage,
+  setAuthExpiredHandler,
 } from '@/services/api';
 
 // Auth Store
@@ -75,6 +77,8 @@ export const useAuthStore = create<AuthState>((set) => ({
   logout: async () => {
     await removeToken();
     await removeRefreshToken();
+    useMetersStore.getState().clearMeters();
+    useUsageStore.getState().clearUsage();
     set({ user: null, isAuthenticated: false });
   },
 
@@ -108,7 +112,10 @@ interface MetersState {
   fetchMeters: () => Promise<void>;
   selectMeter: (meter: Meter) => void;
   deleteMeter: (meterId: number) => Promise<void>;
+  clearMeters: () => void;
 }
+
+const selectedMeterStorageKey = (userId: number) => `gridsense_selected_meter_${userId}`;
 
 export const useMetersStore = create<MetersState>((set, get) => ({
   meters: [],
@@ -120,11 +127,30 @@ export const useMetersStore = create<MetersState>((set, get) => ({
     set({ isLoading: true, error: null });
     try {
       const meters = await metersApi.list();
+      const userId = useAuthStore.getState().user?.id;
+      let savedMeterId: number | null = null;
+      if (userId) {
+        try {
+          const storedId = await AsyncStorage.getItem(selectedMeterStorageKey(userId));
+          savedMeterId = storedId ? Number(storedId) : null;
+        } catch (error: unknown) {
+          set({ error: `Could not restore the saved meter selection: ${getErrorMessage(error)}` });
+        }
+      }
+      const currentMeterId = get().selectedMeter?.id;
+      const selectedMeter =
+        meters.find((meter) => meter.id === currentMeterId) ??
+        meters.find((meter) => meter.id === savedMeterId) ??
+        meters[0] ??
+        null;
       set({
         meters,
-        selectedMeter: get().selectedMeter || meters[0] || null,
+        selectedMeter,
         isLoading: false,
       });
+      if (userId && selectedMeter) {
+        await AsyncStorage.setItem(selectedMeterStorageKey(userId), String(selectedMeter.id));
+      }
     } catch (error: unknown) {
       set({
         error: getErrorMessage(error),
@@ -133,21 +159,49 @@ export const useMetersStore = create<MetersState>((set, get) => ({
     }
   },
 
-  selectMeter: (meter) => set({ selectedMeter: meter }),
+  selectMeter: (meter) => {
+    set({ selectedMeter: meter, error: null });
+    const userId = useAuthStore.getState().user?.id;
+    if (userId) {
+      void AsyncStorage.setItem(selectedMeterStorageKey(userId), String(meter.id)).catch(
+        (error: unknown) =>
+          set({ error: `Could not save the selected meter: ${getErrorMessage(error)}` })
+      );
+    }
+  },
 
   deleteMeter: async (meterId) => {
     try {
       await metersApi.delete(meterId);
       const meters = get().meters.filter((m) => m.id !== meterId);
+      const selectedMeter =
+        get().selectedMeter?.id === meterId ? meters[0] || null : get().selectedMeter;
       set({
         meters,
-        selectedMeter: get().selectedMeter?.id === meterId ? meters[0] || null : get().selectedMeter,
+        selectedMeter,
       });
+      const userId = useAuthStore.getState().user?.id;
+      if (userId && selectedMeter) {
+        await AsyncStorage.setItem(selectedMeterStorageKey(userId), String(selectedMeter.id));
+      }
     } catch (error: unknown) {
       set({ error: getErrorMessage(error) });
     }
   },
+
+  clearMeters: () => set({ meters: [], selectedMeter: null, error: null }),
 }));
+
+setAuthExpiredHandler(() => {
+  useAuthStore.setState({
+    user: null,
+    isAuthenticated: false,
+    isLoading: false,
+    error: 'Your session expired. Please sign in again.',
+  });
+  useMetersStore.getState().clearMeters();
+  useUsageStore.getState().clearUsage();
+});
 
 // Usage Store
 interface UsageState {
@@ -161,6 +215,7 @@ interface UsageState {
   fetchDaily: (meterId: number, days?: number) => Promise<void>;
   fetchHourly: (meterId: number) => Promise<void>;
   fetchAllUsageData: (meterId: number) => Promise<void>;
+  clearUsage: () => void;
 }
 
 export const useUsageStore = create<UsageState>((set) => ({
@@ -213,6 +268,14 @@ export const useUsageStore = create<UsageState>((set) => ({
       });
     }
   },
+
+  clearUsage: () =>
+    set({
+      summary: null,
+      dailyUsage: [],
+      hourlyUsage: [],
+      error: null,
+    }),
 }));
 
 // Recommendations Store

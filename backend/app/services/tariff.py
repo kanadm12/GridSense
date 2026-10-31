@@ -11,17 +11,17 @@ Powercor / United Energy):
     Shoulder  07:00-15:00 and 21:00-22:00 on business days
     Off-peak  22:00-07:00 every day, and all day on weekends
 
-Timestamps are interpreted as AEST wall-clock. Australia's National Electricity Market
-runs on fixed "market time" (UTC+10, no daylight saving), so the hour-of-day boundaries
-above are applied directly to the stored timestamp with no timezone conversion. See
-``app/services/nem12_parser.py`` for the ingestion-side contract.
+NEM12 timestamps are interval ends in fixed market time (UTC+10). ToU periods are
+evaluated at each interval's start after converting that instant to the meter's local
+civil timezone, including DST. See ``app/services/nem12_parser.py`` for ingestion details.
 """
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime, time, timedelta, timezone
 from enum import Enum
 from typing import Iterable, Protocol
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
 class TouPeriod(str, Enum):
@@ -32,7 +32,7 @@ class TouPeriod(str, Enum):
     OFF_PEAK = "off_peak"
 
 
-# --- Period boundaries (24h clock, AEST wall-clock) -------------------------------------
+# --- Period boundaries (24h local civil clock) -------------------------------------------
 PEAK_START_HOUR = 15  # 3pm
 PEAK_END_HOUR = 21  # 9pm
 SHOULDER_MORNING_START_HOUR = 7  # 7am (shoulder begins)
@@ -66,6 +66,79 @@ class _HasInterval(Protocol):
 
     timestamp: datetime
     value: float
+    interval_minutes: int
+
+
+MARKET_TIME = timezone(timedelta(hours=10), name="AEST")
+STATE_TIMEZONES = {
+    "ACT": "Australia/Sydney",
+    "NSW": "Australia/Sydney",
+    "NT": "Australia/Darwin",
+    "QLD": "Australia/Brisbane",
+    "SA": "Australia/Adelaide",
+    "TAS": "Australia/Hobart",
+    "VIC": "Australia/Melbourne",
+}
+
+
+def timezone_for_state(state: str) -> ZoneInfo:
+    """Return a meter state's civil-time zone or fail explicitly for unknown states."""
+    timezone_name = STATE_TIMEZONES.get(state.upper())
+    if timezone_name is None:
+        raise ValueError(f"Unsupported meter state '{state}'; cannot align local billing time")
+    try:
+        return ZoneInfo(timezone_name)
+    except ZoneInfoNotFoundError as exc:
+        raise RuntimeError(f"Timezone data is unavailable for {timezone_name}") from exc
+
+
+def market_timestamp_to_local(timestamp: datetime, state: str) -> datetime:
+    """Convert a NEM market-time timestamp to the meter's local civil time.
+
+    Naive timestamps are interpreted as fixed UTC+10 market wall-clock values. An aware
+    timestamp is already an unambiguous instant and is converted directly.
+    """
+    market_instant = (
+        timestamp.replace(tzinfo=MARKET_TIME)
+        if timestamp.tzinfo is None
+        else timestamp
+    )
+    return market_instant.astimezone(timezone_for_state(state))
+
+
+def local_interval_end_date(timestamp: datetime, state: str) -> date:
+    """Return the local billing date for an interval ending at ``timestamp``."""
+    local_end = market_timestamp_to_local(timestamp, state)
+    if local_end.timetz().replace(tzinfo=None) == time.min:
+        return local_end.date() - timedelta(days=1)
+    return local_end.date()
+
+
+def market_interval_start_to_local(
+    timestamp: datetime, interval_minutes: int, state: str
+) -> datetime:
+    """Return an interval's local start instant from its stored market-time end."""
+    if interval_minutes not in (5, 15, 30):
+        raise ValueError(f"Unsupported interval length {interval_minutes} minutes")
+    interval_end = market_timestamp_to_local(timestamp, state)
+    return (
+        interval_end.astimezone(timezone.utc) - timedelta(minutes=interval_minutes)
+    ).astimezone(interval_end.tzinfo)
+
+
+def market_bounds_for_local_dates(
+    start_date: date, end_date: date, state: str
+) -> tuple[datetime, datetime]:
+    """Return exclusive/inclusive NEM timestamp bounds for local calendar dates."""
+    local_zone = timezone_for_state(state)
+    local_start = datetime.combine(start_date, time.min).replace(tzinfo=local_zone)
+    local_end = datetime.combine(end_date + timedelta(days=1), time.min).replace(
+        tzinfo=local_zone
+    )
+    return (
+        local_start.astimezone(MARKET_TIME).replace(tzinfo=None),
+        local_end.astimezone(MARKET_TIME).replace(tzinfo=None),
+    )
 
 
 def classify_tou_period(timestamp: datetime) -> TouPeriod:
@@ -86,12 +159,23 @@ def classify_tou_period(timestamp: datetime) -> TouPeriod:
     return TouPeriod.SHOULDER
 
 
-def is_peak(timestamp: datetime) -> bool:
-    """True if the timestamp falls in the peak ToU window."""
-    return classify_tou_period(timestamp) is TouPeriod.PEAK
+def classify_interval_tou_period(
+    timestamp: datetime, interval_minutes: int = 30, state: str = "VIC"
+) -> TouPeriod:
+    """Classify an interval by its local start boundary, not its end timestamp."""
+    return classify_tou_period(
+        market_interval_start_to_local(timestamp, interval_minutes, state)
+    )
 
 
-def split_readings_by_period(readings: Iterable[_HasInterval]) -> dict[TouPeriod, float]:
+def is_peak(timestamp: datetime, interval_minutes: int = 30, state: str = "VIC") -> bool:
+    """True if the interval's local start falls in the peak ToU window."""
+    return classify_interval_tou_period(timestamp, interval_minutes, state) is TouPeriod.PEAK
+
+
+def split_readings_by_period(
+    readings: Iterable[_HasInterval], state: str = "VIC"
+) -> dict[TouPeriod, float]:
     """Sum reading ``value`` into ToU buckets.
 
     Accepts any iterable of objects exposing ``timestamp`` (datetime) and ``value``
@@ -106,5 +190,8 @@ def split_readings_by_period(readings: Iterable[_HasInterval]) -> dict[TouPeriod
     for reading in readings:
         if reading.timestamp is None:
             continue
-        totals[classify_tou_period(reading.timestamp)] += reading.value
+        interval_minutes = getattr(reading, "interval_minutes", 30)
+        totals[
+            classify_interval_tou_period(reading.timestamp, interval_minutes, state)
+        ] += reading.value
     return totals

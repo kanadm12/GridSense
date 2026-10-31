@@ -1,0 +1,7 @@
+strategy,comparison,matched_scenario_cells,distinct_generated_profiles,mean_profile_savings_difference_aud,profile_savings_difference_95pct_ci_low_aud,profile_savings_difference_95pct_ci_high_aud,limited_flexibility_lower_savings_cells,limited_flexibility_higher_savings_cells,tied_savings_cells,technically_incomplete_or_infeasible_at_limited_flexibility_cells,technically_incomplete_or_infeasible_at_comparator_flexibility_cells,no_actionable_at_limited_flexibility_cells,no_actionable_at_comparator_flexibility_cells,mean_profile_inconvenience_difference_hours,flat_tariff_tied_cells,flat_tariff_comparison_cells,variable_tariff_tied_cells,variable_tariff_comparison_cells
+S1_greedy_nominal,2h_minus_6h,64,8,-0.4039804215625,-0.4774059587120846,-0.3305548844129155,32,0,32,0,0,0,0,-1.640625,32,32,0,32
+S2_milp_nominal,2h_minus_6h,64,8,-0.40738532406250005,-0.48267127758428174,-0.33209937054071836,32,0,32,0,0,0,0,-1.640625,32,32,0,32
+S2_milp_forecast,2h_minus_6h,64,8,-0.41601636734374997,-0.5035626157235056,-0.32847011896399436,32,0,32,0,0,0,0,-1.7265625,32,32,0,32
+S1_greedy_nominal,2h_minus_10h,64,8,-0.564196801875,-0.6897015012796424,-0.43869210247035767,32,0,32,0,0,0,0,-2.28125,32,32,0,32
+S2_milp_nominal,2h_minus_10h,64,8,-0.564196801875,-0.6897015012796424,-0.43869210247035767,32,0,32,0,0,0,0,-2.28125,32,32,0,32
+S2_milp_forecast,2h_minus_10h,64,8,-0.5886515134374999,-0.7255779566501127,-0.45172507022488706,32,0,32,0,0,0,0,-2.6171875,32,32,0,32

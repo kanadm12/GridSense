@@ -1,16 +1,16 @@
 """Services to import parsed NEM12 data into the database and generate aggregates."""
 
+import logging
 from datetime import datetime
 from typing import Callable, Optional
-import logging
 
-from sqlalchemy import func, select
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.services.nem12_parser import NEM12Parser, NEM12ParseResult, NEM12MeterData
-from app.models import Meter, Reading, NEM12Upload, DailyAggregate
+from app.models import DailyAggregate, Meter, NEM12Upload, Reading
+from app.models.reading import consumption_reading_filter
 from app.schemas.reading import ReadingBulkCreate
-
+from app.services.nem12_parser import NEM12MeterData, NEM12Parser, NEM12ParseResult
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +35,7 @@ class NEM12Importer:
         """Parse NEM12 content, persist upload record, meters, and readings.
 
         If `upload_id` is provided, update that upload record; otherwise create a new one.
-        
+
         Args:
             db: Database session
             user_id: User ID for ownership
@@ -70,41 +70,60 @@ class NEM12Importer:
             db.add(upload)
             db.flush()
 
-        # Parse file
-        result = self.parser.parse(file_content)
-
-        # Save parsed data
-        total_inserted = 0
-        errors_text = "\n".join(result.errors) if result.errors else None
-        warnings_text = "\n".join(result.warnings) if result.warnings else None
-
         try:
+            result = self.parser.parse(file_content)
+            total_inserted = 0
+            errors_text = "\n".join(result.errors) if result.errors else None
+            warnings_text = "\n".join(result.warnings) if result.warnings else None
+
             for meter_data in result.meters:
                 meter = self._get_or_create_meter(db, user_id, meter_data)
+                existing_timestamps = {
+                    row[0]
+                    for row in db.query(Reading.timestamp)
+                    .filter(Reading.meter_id == meter.id)
+                    .all()
+                }
 
                 # Prepare Reading objects
                 reading_objs = []
                 for r in meter_data.readings:
                     # Expect ReadingBulkCreate-like objects
                     if isinstance(r, ReadingBulkCreate):
+                        if r.timestamp in existing_timestamps:
+                            continue
+                        existing_timestamps.add(r.timestamp)
                         reading_objs.append(
                             Reading(
                                 meter_id=meter.id,
                                 timestamp=r.timestamp,
+                                interval_minutes=r.interval_minutes,
                                 value=r.value,
                                 quality=r.quality,
                                 register_type=r.register_type,
+                                direction=r.direction,
+                                quality_method=r.quality_method,
+                                reason_code=r.reason_code,
+                                reason_description=r.reason_description,
                             )
                         )
                     else:
                         # fallback dict-like
+                        if r["timestamp"] in existing_timestamps:
+                            continue
+                        existing_timestamps.add(r["timestamp"])
                         reading_objs.append(
                             Reading(
                                 meter_id=meter.id,
                                 timestamp=r["timestamp"],
+                                interval_minutes=r.get("interval_minutes", 30),
                                 value=r["value"],
                                 quality=r.get("quality", "A"),
-                                register_type=r.get("register_type", "B"),
+                                register_type=r.get("register_type", "U"),
+                                direction=r.get("direction", "unknown"),
+                                quality_method=r.get("quality_method"),
+                                reason_code=r.get("reason_code"),
+                                reason_description=r.get("reason_description"),
                             )
                         )
 
@@ -112,7 +131,12 @@ class NEM12Importer:
                 if reading_objs:
                     total_readings = len(reading_objs)
                     logger.info(
-                        f"Inserting {total_readings} readings for meter {meter.nmi}"
+                        "Inserting parsed NEM12 readings",
+                        extra={
+                            "reading_count": total_readings,
+                            "meter_id": meter.id,
+                            "upload_id": upload.id,
+                        },
                     )
 
                     for i in range(0, total_readings, self.CHUNK_SIZE):
@@ -139,7 +163,8 @@ class NEM12Importer:
 
             # Update upload record
             upload.status = "completed"
-            upload.total_readings = total_inserted
+            upload.total_readings = result.total_readings
+            upload.progress_percent = 100
             upload.errors = errors_text
             upload.warnings = warnings_text
             upload.processed_at = datetime.utcnow()
@@ -148,16 +173,34 @@ class NEM12Importer:
 
             # Generate aggregates for affected meters
             for meter_data in result.meters:
-                meter = db.query(Meter).filter(Meter.nmi == meter_data.nmi, Meter.suffix == meter_data.suffix, Meter.user_id == user_id).first()
+                meter = (
+                    db.query(Meter)
+                    .filter(
+                        Meter.nmi == meter_data.nmi,
+                        Meter.suffix == meter_data.suffix,
+                        Meter.register_id == meter_data.register_id,
+                        Meter.user_id == user_id,
+                    )
+                    .first()
+                )
                 if meter:
                     self.generate_daily_aggregates(db, meter.id)
 
-        except Exception:
+        except Exception as exc:
             db.rollback()
-            upload.status = "failed"
-            upload.errors = (upload.errors or "") + "\nImport failure"
-            db.add(upload)
-            db.commit()
+            failed_upload = db.query(NEM12Upload).filter(NEM12Upload.id == upload.id).first()
+            if failed_upload is not None:
+                failed_upload.status = "failed"
+                failed_upload.errors = "Import failed; retry the upload."
+                db.add(failed_upload)
+                db.commit()
+            logger.error(
+                "NEM12 import failed",
+                extra={
+                    "upload_id": upload.id,
+                    "error_type": type(exc).__name__,
+                },
+            )
             raise
 
         return result
@@ -165,16 +208,35 @@ class NEM12Importer:
     def _get_or_create_meter(self, db: Session, user_id: int, meter_data: NEM12MeterData) -> Meter:
         meter = (
             db.query(Meter)
-            .filter(Meter.nmi == meter_data.nmi, Meter.suffix == (meter_data.suffix or ""), Meter.user_id == user_id)
+            .filter(
+                Meter.nmi == meter_data.nmi,
+                Meter.suffix == (meter_data.suffix or ""),
+                Meter.register_id == meter_data.register_id,
+                Meter.user_id == user_id,
+            )
             .first()
         )
+        if meter is None:
+            meter = (
+                db.query(Meter)
+                .filter(
+                    Meter.nmi == meter_data.nmi,
+                    Meter.suffix == (meter_data.suffix or ""),
+                    Meter.register_id.is_(None),
+                    Meter.user_id == user_id,
+                )
+                .first()
+            )
         if meter:
+            meter.register_id = meter_data.register_id
+            db.flush()
             return meter
 
         meter = Meter(
             user_id=user_id,
             nmi=meter_data.nmi,
             meter_serial=meter_data.meter_serial,
+            register_id=meter_data.register_id,
             suffix=meter_data.suffix,
             unit_of_measure=meter_data.unit_of_measure,
             interval_minutes=meter_data.interval_minutes,
@@ -190,7 +252,7 @@ class NEM12Importer:
         reading_date = func.date(Reading.timestamp)
         stmt = (
             db.query(reading_date.label("day"), func.sum(Reading.value).label("total_kwh"))
-            .filter(Reading.meter_id == meter_id)
+            .filter(Reading.meter_id == meter_id, consumption_reading_filter())
             .group_by(reading_date)
         )
 
@@ -215,7 +277,9 @@ class NEM12Importer:
                 .first()
             )
             if not agg:
-                agg = DailyAggregate(meter_id=meter_id, date=day, total_kwh=total_kwh, peak_kwh=0.0, offpeak_kwh=0.0)
+                agg = DailyAggregate(
+                    meter_id=meter_id, date=day, total_kwh=total_kwh, peak_kwh=0.0, offpeak_kwh=0.0
+                )
                 db.add(agg)
             else:
                 agg.total_kwh = total_kwh

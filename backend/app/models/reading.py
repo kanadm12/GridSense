@@ -3,8 +3,9 @@
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, Float, ForeignKey, Index, String
+from sqlalchemy import DateTime, Float, ForeignKey, Index, Integer, String, Text, and_, or_
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.sql.elements import ColumnElement
 
 from app.models.base import Base
 
@@ -22,17 +23,27 @@ class Reading(Base):
         ForeignKey("meters.id", ondelete="CASCADE"), nullable=False
     )
 
-    # Timestamp of the interval end
+    # NEM12 source interval-end wall-clock, preserved as naive fixed-market-time (UTC+10).
+    # Consumers convert it to meter-local time only when applying local billing windows.
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    # Length of the interval represented by timestamp and value.
+    interval_minutes: Mapped[int] = mapped_column(
+        Integer, default=30, server_default="30", nullable=False
+    )
 
-    # Energy value in kWh (positive = consumption, negative = export/generation)
+    # Energy value in kWh; sign semantics depend on the source register/direction.
     value: Mapped[float] = mapped_column(Float, nullable=False)
 
-    # Quality flag from NEM12 (A=Actual, E=Estimated, S=Substituted)
+    # Quality flag from NEM12 (A/E/F/S/V); U means the source metadata was unresolved.
     quality: Mapped[str] = mapped_column(String(1), default="A", nullable=False)
+    quality_method: Mapped[str | None] = mapped_column(String(3), nullable=True)
+    reason_code: Mapped[str | None] = mapped_column(String(3), nullable=True)
+    reason_description: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    # Register type: E=Export (generation), B=Import (consumption)
+    # Legacy classification retained for existing consumers; U means unresolved.
     register_type: Mapped[str] = mapped_column(String(1), default="B", nullable=False)
+    # NULL preserves the legacy interpretation for readings predating this field.
+    direction: Mapped[str | None] = mapped_column(String(10), nullable=True)
 
     # Relationships
     meter: Mapped["Meter"] = relationship("Meter", back_populates="readings")
@@ -45,3 +56,11 @@ class Reading(Base):
 
     def __repr__(self) -> str:
         return f"<Reading(meter_id={self.meter_id}, timestamp={self.timestamp}, value={self.value})>"
+
+
+def consumption_reading_filter() -> ColumnElement[bool]:
+    """Include confirmed imports and legacy readings, but exclude unresolved channels."""
+    return or_(
+        Reading.direction == "import",
+        and_(Reading.direction.is_(None), Reading.register_type == "B"),
+    )

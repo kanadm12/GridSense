@@ -13,6 +13,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy import inspect
 
 
 revision: str = 'a1b2c3d4e5f6'
@@ -22,11 +23,15 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.add_column(
-        'meters',
-        sa.Column('is_active', sa.Boolean(), nullable=False, server_default=sa.true()),
-    )
+    bind = op.get_bind()
+    if "is_active" not in {column["name"] for column in inspect(bind).get_columns("meters")}:
+        op.add_column(
+            "meters",
+            sa.Column("is_active", sa.Boolean(), nullable=False, server_default=sa.true()),
+        )
 
 
 def downgrade() -> None:
-    op.drop_column('meters', 'is_active')
+    bind = op.get_bind()
+    if "is_active" in {column["name"] for column in inspect(bind).get_columns("meters")}:
+        op.drop_column("meters", "is_active")

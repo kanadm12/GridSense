@@ -1,0 +1,104 @@
+{
+  "request": {
+    "schema_version": "1.0",
+    "meter_id": 42,
+    "tariff_id": 17,
+    "scenario_id": "demo-water-heater",
+    "interval_minutes": 30,
+    "timezone": "Australia/Melbourne",
+    "currency": "AUD",
+    "preference_penalty_aud_per_interval": 0.01,
+    "tasks": [
+      {
+        "task_id": "water-heater-1",
+        "appliance": "Water heater",
+        "rated_power_kw": 2.4,
+        "duration_minutes": 60,
+        "earliest_start": "2026-11-03T08:00:00+11:00",
+        "deadline": "2026-11-03T10:00:00+11:00",
+        "preferred_start": "2026-11-03T08:30:00+11:00",
+        "mandatory": true
+      }
+    ],
+    "baseline_profile": {
+      "source": "synthetic",
+      "profile_id": "demo-water-heater-baseline-v1",
+      "scenario_id": "demo-water-heater",
+      "includes_scheduled_tasks": false,
+      "intervals": [
+        {"interval_start": "2026-11-03T08:00:00+11:00", "demand_kw": 0.8},
+        {"interval_start": "2026-11-03T08:30:00+11:00", "demand_kw": 0.8},
+        {"interval_start": "2026-11-03T09:00:00+11:00", "demand_kw": 0.8},
+        {"interval_start": "2026-11-03T09:30:00+11:00", "demand_kw": 0.8}
+      ]
+    }
+  },
+  "response": {
+    "schema_version": "1.0",
+    "scenario_id": "demo-water-heater",
+    "meter_id": 42,
+    "status": "feasible",
+    "tariff": {
+      "tariff_id": 17,
+      "status": "configured",
+      "currency": "AUD"
+    },
+    "objective_breakdown": {
+      "currency": "AUD",
+      "baseline_energy_cost_aud": 0.448,
+      "candidate_energy_cost_aud": 1.12,
+      "reference_energy_cost_aud": 1.12,
+      "energy_cost_delta_aud": 0.0,
+      "preference_penalty_aud": 0.0,
+      "omission_penalty_aud": 0.0,
+      "total_objective_aud": 1.12,
+      "reference_preference_penalty_aud": 0.0,
+      "reference_omission_penalty_aud": 0.0,
+      "reference_objective_aud": 1.12
+    },
+    "candidate_schedule": {
+      "status": "feasible",
+      "method": "milp",
+      "tasks": [
+        {
+          "task_id": "water-heater-1",
+          "start": "2026-11-03T08:30:00+11:00",
+          "end": "2026-11-03T09:30:00+11:00",
+          "power_kw": 2.4,
+          "energy_kwh": 2.4,
+          "omitted": false
+        }
+      ],
+      "total_energy_kwh": 4.0,
+      "total_cost_aud": 1.12
+    },
+    "reference_schedule": {
+      "status": "feasible",
+      "method": "deterministic_greedy",
+      "tasks": [
+        {
+          "task_id": "water-heater-1",
+          "start": "2026-11-03T08:30:00+11:00",
+          "end": "2026-11-03T09:30:00+11:00",
+          "power_kw": 2.4,
+          "energy_kwh": 2.4,
+          "omitted": false
+        }
+      ],
+      "total_energy_kwh": 4.0,
+      "total_cost_aud": 1.12
+    },
+    "assumptions": [
+      "The fixed baseline excludes scheduled tasks; its energy and cost are included exactly once.",
+      "Task demand is constant fixed power for the full non-interruptible task duration.",
+      "Energy charges use the owned tariff's interval rates; daily supply and demand charges are excluded.",
+      "The candidate-minus-reference energy cost delta is not a household savings estimate.",
+      "Optional tasks without an omission penalty are omitted under the no-savings treatment.",
+      "The deterministic greedy reference uses the same tasks, tariff, baseline, and power limits; it is not an optimum.",
+      "This endpoint returns a preview only and never executes or dispatches devices.",
+      "Baseline profile demo-water-heater-baseline-v1 is synthetic for scenario demo-water-heater.",
+      "Preference cost is preference_penalty_aud_per_interval times the distance from preferred_start in scheduling intervals."
+    ],
+    "blockers": []
+  }
+}

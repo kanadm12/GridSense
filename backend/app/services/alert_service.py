@@ -117,10 +117,13 @@ class AlertService:
         try:
             forecast = self.forecaster.forecast_monthly_bill(meter_id)
             projected_cost = forecast.get("projected_total_cost", 0)
+            if projected_cost is None:
+                return 0
             # Alert if projected cost is >$300 or >20% above average
             if projected_cost > 300 or (
                 forecast.get("days_elapsed", 1) > 7
-                and projected_cost > forecast.get("cost_so_far", 0) * 1.4
+                and forecast.get("cost_so_far") is not None
+                and projected_cost > forecast["cost_so_far"] * 1.4
             ):
                 data = {
                     "meter_id": meter_id,
@@ -186,11 +189,10 @@ class AlertService:
 
             total_kwh = sum(d.total_kwh or 0 for d in week_data)
             avg_daily = total_kwh / len(week_data) if week_data else 0
-            estimated_cost = total_kwh * 0.27  # Average rate
 
             message = (
-                f"This week: {total_kwh:.1f} kWh (avg {avg_daily:.1f} kWh/day). "
-                f"Estimated cost: ${estimated_cost:.2f}."
+                f"This week: {total_kwh:.1f} kWh "
+                f"(avg {avg_daily:.1f} kWh/day)."
             )
 
             data = {
@@ -199,7 +201,6 @@ class AlertService:
                 "week_end": str(end_date),
                 "total_kwh": total_kwh,
                 "avg_daily_kwh": avg_daily,
-                "estimated_cost": estimated_cost,
                 "dedupe_key": f"{meter_id}:weekly:{start_date}",
             }
 

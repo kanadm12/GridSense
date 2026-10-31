@@ -17,6 +17,15 @@ from app.schemas.tariff import (
 router = APIRouter(prefix="/tariffs", tags=["Tariffs"])
 
 
+def _tariff_values(tariff_data: TariffCreate, exclude_unset: bool = False) -> dict:
+    values = tariff_data.model_dump(exclude_unset=exclude_unset)
+    if tariff_data.periods is not None:
+        values["periods"] = [
+            period.model_dump(mode="json") for period in tariff_data.periods
+        ]
+    return values
+
+
 @router.get("/presets", response_model=list[TariffPreset])
 async def get_tariff_presets() -> list[TariffPreset]:
     """Get list of Victorian tariff presets from major retailers."""
@@ -45,8 +54,9 @@ async def create_or_update_tariff(
 
     if existing:
         # Update existing
-        for field, value in tariff_data.model_dump(exclude_unset=True).items():
+        for field, value in _tariff_values(tariff_data, exclude_unset=True).items():
             setattr(existing, field, value)
+        existing.is_preset = False
         db.commit()
         db.refresh(existing)
         return existing
@@ -54,7 +64,7 @@ async def create_or_update_tariff(
         # Create new
         tariff = Tariff(
             user_id=current_user.id,
-            **tariff_data.model_dump(),
+            **_tariff_values(tariff_data),
         )
         db.add(tariff)
         db.commit()
@@ -87,7 +97,13 @@ async def apply_tariff_preset(
         "peak_rate_cents_kwh": preset.peak_rate_cents_kwh,
         "off_peak_rate_cents_kwh": preset.off_peak_rate_cents_kwh,
         "shoulder_rate_cents_kwh": preset.shoulder_rate_cents_kwh,
+        "feed_in_rate_cents_kwh": preset.feed_in_rate_cents_kwh,
         "daily_supply_charge_cents": preset.daily_supply_charge_cents,
+        "rates_include_gst": preset.rates_include_gst,
+        "is_preset": True,
+        "effective_from": None,
+        "effective_to": None,
+        "periods": None,
     }
 
     if existing:

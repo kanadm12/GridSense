@@ -47,27 +47,27 @@ class AnomalyReport(BaseModel):
 
 
 class BillForecast(BaseModel):
-    """Bill forecast for current or future month."""
+    """Usage projection; monetary fields are unavailable without tariff-backed pricing."""
     meter_id: int
     month: str
     days_in_month: int
     days_elapsed: int
     days_remaining: int
     usage_so_far_kwh: float
-    cost_so_far: float
+    cost_so_far: float | None = None
     projected_total_kwh: float
-    projected_total_cost: float
-    projected_cost_low: float
-    projected_cost_high: float
+    projected_total_cost: float | None = None
+    projected_cost_low: float | None = None
+    projected_cost_high: float | None = None
     daily_average_kwh: float
-    confidence_level: float = 0.95
+    confidence_level: float | None = None
 
 
 class BillTrendItem(BaseModel):
-    """Historical bill data for a month."""
+    """Historical usage data for a month; cost is unavailable without tariff-backed pricing."""
     month: str
     total_kwh: float
-    total_cost: float
+    total_cost: float | None = None
     days_with_data: int
 
 
@@ -101,7 +101,7 @@ class DailyBrief(BaseModel):
     date: str
     greeting: str
     yesterday_usage_kwh: float
-    yesterday_cost: float
+    yesterday_cost: float | None = None
     comparison_to_average: float  # Percentage, negative = below average
     insights: list[Insight]
     forecast_message: str | None = None

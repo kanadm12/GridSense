@@ -1,23 +1,23 @@
 """Usage analyzer service for calculating consumption metrics."""
 
 from collections import defaultdict
-from datetime import date, datetime, timedelta
-from typing import Any
+from datetime import date, timedelta
 
-from sqlalchemy import func, extract
 from sqlalchemy.orm import Session
 
 from app.models.meter import Meter
-from app.models.reading import Reading
+from app.models.reading import Reading, consumption_reading_filter
 from app.schemas.usage import DailyUsage, HourlyUsage, UsageSummary, WeeklyUsage
 from app.services.tariff import (
-    DEFAULT_FLAT_RATE,
     OFF_PEAK_END_HOUR,
     OFF_PEAK_START_HOUR,
     PEAK_END_HOUR,
     PEAK_START_HOUR,
     TouPeriod,
-    classify_tou_period,
+    classify_interval_tou_period,
+    local_interval_end_date,
+    market_bounds_for_local_dates,
+    market_interval_start_to_local,
     split_readings_by_period,
 )
 
@@ -38,9 +38,6 @@ class UsageAnalyzer:
     PEAK_END = PEAK_END_HOUR  # 9pm
     OFF_PEAK_START = OFF_PEAK_START_HOUR  # 10pm
     OFF_PEAK_END = OFF_PEAK_END_HOUR  # 7am
-
-    # Flat rate estimate ($/kWh) - Victorian average
-    FLAT_RATE = DEFAULT_FLAT_RATE  # $0.25 per kWh
 
     def __init__(self, db: Session):
         self.db = db
@@ -68,97 +65,93 @@ class UsageAnalyzer:
         if start_date is None:
             start_date = end_date - timedelta(days=limit)
 
-        # Query for daily aggregations
-        query = (
-            self.db.query(
-                func.date(Reading.timestamp).label("date"),
-                func.sum(Reading.value).label("total_kwh"),
-                func.max(Reading.value).label("max_interval_kwh"),
-            )
-            .filter(
-                Reading.meter_id == meter_id,
-                Reading.timestamp >= datetime.combine(start_date, datetime.min.time()),
-                Reading.timestamp <= datetime.combine(end_date, datetime.max.time()),
-            )
-            .group_by(func.date(Reading.timestamp))
-            .order_by(func.date(Reading.timestamp).desc())
-            .limit(limit)
-        )
-
-        results = query.all()
-        
-        if not results:
+        meter = self.db.query(Meter).filter(Meter.id == meter_id).first()
+        if meter is None:
             return []
 
-        # Batch fetch all readings for TOU breakdown (avoids N+1 query)
-        date_values = [_ensure_date(row.date) for row in results]
-        min_date = min(date_values)
-        max_date = max(date_values)
-        
-        all_readings = (
+        market_start, market_end = market_bounds_for_local_dates(
+            start_date, end_date, meter.state
+        )
+        readings = (
             self.db.query(Reading)
             .filter(
                 Reading.meter_id == meter_id,
-                Reading.timestamp >= datetime.combine(min_date, datetime.min.time()),
-                Reading.timestamp <= datetime.combine(max_date, datetime.max.time()),
+                consumption_reading_filter(),
+                Reading.timestamp > market_start,
+                Reading.timestamp <= market_end,
             )
             .all()
         )
-        
-        # Group readings by date and calculate TOU breakdown
-        tou_by_date = self._batch_tou_breakdown(all_readings)
-        
-        daily_usage = []
-        for row in results:
-            day = _ensure_date(row.date)
-            tou_data = tou_by_date.get(day, {"peak": 0.0, "off_peak": 0.0, "shoulder": 0.0})
-
-            daily_usage.append(
-                DailyUsage(
-                    date=day,
-                    total_kwh=round(row.total_kwh, 3),
-                    peak_kwh=round(tou_data["peak"], 3),
-                    off_peak_kwh=round(tou_data["off_peak"], 3),
-                    shoulder_kwh=round(tou_data["shoulder"], 3),
-                    max_interval_kwh=round(row.max_interval_kwh, 3),
-                    estimated_cost=round(row.total_kwh * self.FLAT_RATE, 2),
-                )
-            )
-
-        return daily_usage
-
-    def _batch_tou_breakdown(self, readings: list[Reading]) -> dict[date, dict[str, float]]:
-        """Calculate weekday-aware TOU breakdown for multiple days from a batch of readings."""
-        result: dict[date, dict[str, float]] = defaultdict(
-            lambda: {"peak": 0.0, "off_peak": 0.0, "shoulder": 0.0}
+        daily: dict[date, dict[str, float]] = defaultdict(
+            lambda: {
+                "total": 0.0,
+                "max": 0.0,
+                "peak": 0.0,
+                "off_peak": 0.0,
+                "shoulder": 0.0,
+            }
         )
-
         for reading in readings:
             if reading.timestamp is None:
                 continue
-            day = reading.timestamp.date()
-            period = classify_tou_period(reading.timestamp)
-            result[day][period.value] += reading.value
+            day_data = daily[local_interval_end_date(reading.timestamp, meter.state)]
+            day_data["total"] += reading.value
+            day_data["max"] = max(day_data["max"], reading.value)
+            period = classify_interval_tou_period(
+                reading.timestamp, reading.interval_minutes, meter.state
+            )
+            day_data[period.value] += reading.value
 
+        return [
+            DailyUsage(
+                date=day,
+                total_kwh=round(data["total"], 3),
+                peak_kwh=round(data["peak"], 3),
+                off_peak_kwh=round(data["off_peak"], 3),
+                shoulder_kwh=round(data["shoulder"], 3),
+                max_interval_kwh=round(data["max"], 3),
+                estimated_cost=None,
+            )
+            for day, data in sorted(daily.items(), reverse=True)[:limit]
+        ]
+
+    def _batch_tou_breakdown(
+        self, readings: list[Reading], state: str = "VIC"
+    ) -> dict[date, dict[str, float]]:
+        """Bucket interval energy by local end date and local-start tariff period."""
+        result: dict[date, dict[str, float]] = defaultdict(
+            lambda: {"peak": 0.0, "off_peak": 0.0, "shoulder": 0.0}
+        )
+        for reading in readings:
+            if reading.timestamp is None:
+                continue
+            day = local_interval_end_date(reading.timestamp, state)
+            period = classify_interval_tou_period(
+                reading.timestamp, reading.interval_minutes, state
+            )
+            result[day][period.value] += reading.value
         return dict(result)
 
     def _get_tou_breakdown(self, meter_id: int, day: date | str) -> dict[str, float]:
         """Get weekday-aware Time-of-Use breakdown for a specific day."""
         day = _ensure_date(day)
-        start = datetime.combine(day, datetime.min.time())
-        end = datetime.combine(day, datetime.max.time())
+        meter = self.db.query(Meter).filter(Meter.id == meter_id).first()
+        if meter is None:
+            return {"peak": 0.0, "off_peak": 0.0, "shoulder": 0.0}
+        start, end = market_bounds_for_local_dates(day, day, meter.state)
 
         readings = (
             self.db.query(Reading)
             .filter(
                 Reading.meter_id == meter_id,
-                Reading.timestamp >= start,
+                consumption_reading_filter(),
+                Reading.timestamp > start,
                 Reading.timestamp <= end,
             )
             .all()
         )
 
-        buckets = split_readings_by_period(readings)
+        buckets = split_readings_by_period(readings, meter.state)
         return {
             "peak": buckets[TouPeriod.PEAK],
             "off_peak": buckets[TouPeriod.OFF_PEAK],
@@ -180,32 +173,37 @@ class UsageAnalyzer:
         if start_date is None:
             start_date = end_date - timedelta(days=30)
 
-        query = (
-            self.db.query(
-                extract("hour", Reading.timestamp).label("hour"),
-                func.avg(Reading.value).label("avg_kwh"),
-                func.sum(Reading.value).label("total_kwh"),
-                func.count(Reading.id).label("reading_count"),
-            )
+        meter = self.db.query(Meter).filter(Meter.id == meter_id).first()
+        if meter is None:
+            return []
+        market_start, market_end = market_bounds_for_local_dates(
+            start_date, end_date, meter.state
+        )
+        readings = (
+            self.db.query(Reading)
             .filter(
                 Reading.meter_id == meter_id,
-                Reading.timestamp >= datetime.combine(start_date, datetime.min.time()),
-                Reading.timestamp <= datetime.combine(end_date, datetime.max.time()),
+                consumption_reading_filter(),
+                Reading.timestamp > market_start,
+                Reading.timestamp <= market_end,
             )
-            .group_by(extract("hour", Reading.timestamp))
-            .order_by(extract("hour", Reading.timestamp))
+            .all()
         )
-
-        results = query.all()
-
+        hourly: dict[int, list[float]] = defaultdict(lambda: [0.0, 0.0])
+        for reading in readings:
+            hour = market_interval_start_to_local(
+                reading.timestamp, reading.interval_minutes, meter.state
+            ).hour
+            hourly[hour][0] += reading.value
+            hourly[hour][1] += 1
         return [
             HourlyUsage(
-                hour=int(row.hour),
-                avg_kwh=round(row.avg_kwh, 4),
-                total_kwh=round(row.total_kwh, 3),
-                reading_count=row.reading_count,
+                hour=hour,
+                avg_kwh=round(total / count, 4),
+                total_kwh=round(total, 3),
+                reading_count=int(count),
             )
-            for row in results
+            for hour, (total, count) in sorted(hourly.items())
         ]
 
     def get_weekly_usage(
@@ -221,40 +219,38 @@ class UsageAnalyzer:
             start_date = end_date - timedelta(days=90)  # 3 months for better pattern
 
         day_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
-
-        query = (
-            self.db.query(
-                extract("dow", Reading.timestamp).label("day_of_week"),
-                func.avg(Reading.value).label("avg_kwh"),
-                func.sum(Reading.value).label("total_kwh"),
-            )
+        meter = self.db.query(Meter).filter(Meter.id == meter_id).first()
+        if meter is None:
+            return []
+        market_start, market_end = market_bounds_for_local_dates(
+            start_date, end_date, meter.state
+        )
+        readings = (
+            self.db.query(Reading)
             .filter(
                 Reading.meter_id == meter_id,
-                Reading.timestamp >= datetime.combine(start_date, datetime.min.time()),
-                Reading.timestamp <= datetime.combine(end_date, datetime.max.time()),
+                consumption_reading_filter(),
+                Reading.timestamp > market_start,
+                Reading.timestamp <= market_end,
             )
-            .group_by(extract("dow", Reading.timestamp))
-            .order_by(extract("dow", Reading.timestamp))
+            .all()
         )
-
-        results = query.all()
-
-        # Map results (PostgreSQL dow: 0=Sunday, 1=Monday, ...)
-        weekly_data = []
-        for row in results:
-            dow = int(row.day_of_week)
-            # Convert to Python weekday (0=Monday)
-            python_dow = (dow - 1) % 7
-            weekly_data.append(
+        weekly: dict[int, list[float]] = defaultdict(lambda: [0.0, 0.0])
+        for reading in readings:
+            weekday = market_interval_start_to_local(
+                reading.timestamp, reading.interval_minutes, meter.state
+            ).weekday()
+            weekly[weekday][0] += reading.value
+            weekly[weekday][1] += 1
+        return [
                 WeeklyUsage(
-                    day_of_week=python_dow,
-                    day_name=day_names[python_dow],
-                    avg_kwh=round(row.avg_kwh, 4),
-                    total_kwh=round(row.total_kwh, 3),
+                    day_of_week=weekday,
+                    day_name=day_names[weekday],
+                    avg_kwh=round(total / count, 4),
+                    total_kwh=round(total, 3),
                 )
-            )
-
-        return sorted(weekly_data, key=lambda x: x.day_of_week)
+            for weekday, (total, count) in sorted(weekly.items())
+        ]
 
     def get_usage_summary(
         self,
@@ -272,43 +268,28 @@ class UsageAnalyzer:
         if start_date is None:
             start_date = end_date - timedelta(days=30)
 
-        start_dt = datetime.combine(start_date, datetime.min.time())
-        end_dt = datetime.combine(end_date, datetime.max.time())
-
-        # Get overall stats
-        overall = (
-            self.db.query(
-                func.sum(Reading.value).label("total"),
-                func.min(Reading.timestamp).label("min_ts"),
-                func.max(Reading.timestamp).label("max_ts"),
-            )
-            .filter(
-                Reading.meter_id == meter_id,
-                Reading.timestamp >= start_dt,
-                Reading.timestamp <= end_dt,
-            )
-            .first()
+        market_start, market_end = market_bounds_for_local_dates(
+            start_date, end_date, meter.state
         )
-
-        if not overall or overall.total is None:
-            return None
-
-        # Get daily stats
-        daily_stats = (
-            self.db.query(
-                func.date(Reading.timestamp).label("date"),
-                func.sum(Reading.value).label("daily_total"),
-            )
+        readings = (
+            self.db.query(Reading)
             .filter(
                 Reading.meter_id == meter_id,
-                Reading.timestamp >= start_dt,
-                Reading.timestamp <= end_dt,
+                consumption_reading_filter(),
+                Reading.timestamp > market_start,
+                Reading.timestamp <= market_end,
             )
-            .group_by(func.date(Reading.timestamp))
             .all()
         )
+        if not readings:
+            return None
 
-        daily_totals = [row.daily_total for row in daily_stats]
+        total_kwh = sum(reading.value for reading in readings)
+        daily_totals_by_date: dict[date, float] = defaultdict(float)
+        for reading in readings:
+            local_day = local_interval_end_date(reading.timestamp, meter.state)
+            daily_totals_by_date[local_day] += reading.value
+        daily_totals = list(daily_totals_by_date.values())
         days_count = len(daily_totals)
 
         if days_count == 0:
@@ -322,22 +303,22 @@ class UsageAnalyzer:
         off_peak_total = sum(
             h.total_kwh for h in hourly if h.hour >= self.OFF_PEAK_START or h.hour < self.OFF_PEAK_END
         )
-        off_peak_pct = (off_peak_total / overall.total * 100) if overall.total > 0 else 0
+        off_peak_pct = (off_peak_total / total_kwh * 100) if total_kwh > 0 else 0
 
         return UsageSummary(
             meter_id=meter_id,
             meter_name=meter.name,
             nmi=meter.nmi,
-            start_date=overall.min_ts,
-            end_date=overall.max_ts,
+            start_date=min(reading.timestamp for reading in readings),
+            end_date=max(reading.timestamp for reading in readings),
             days_count=days_count,
-            total_kwh=round(overall.total, 3),
-            avg_daily_kwh=round(overall.total / days_count, 3),
+            total_kwh=round(total_kwh, 3),
+            avg_daily_kwh=round(total_kwh / days_count, 3),
             max_daily_kwh=round(max(daily_totals), 3),
             min_daily_kwh=round(min(daily_totals), 3),
             peak_hour=peak_hour_data.hour if peak_hour_data else 18,
             peak_avg_kwh=round(peak_hour_data.avg_kwh, 4) if peak_hour_data else 0,
             off_peak_percentage=round(off_peak_pct, 1),
-            estimated_total_cost=round(overall.total * self.FLAT_RATE, 2),
-            estimated_daily_cost=round(overall.total / days_count * self.FLAT_RATE, 2),
+            estimated_total_cost=None,
+            estimated_daily_cost=None,
         )

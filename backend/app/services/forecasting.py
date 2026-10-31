@@ -1,42 +1,25 @@
 """Bill forecasting service using time series analysis."""
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any
 
-import numpy as np
 from sqlalchemy.orm import Session
 
 from app.models.meter import Meter
-from app.models.reading import Reading
+from app.models.reading import Reading, consumption_reading_filter
 from app.services.tariff import (
-    DEFAULT_SUPPLY_CHARGE,
-    DEFAULT_TOU_RATES,
-    classify_tou_period,
+    local_interval_end_date,
+    market_bounds_for_local_dates,
+    timezone_for_state,
 )
 
 
 class BillForecaster:
-    """Forecasts end-of-month bill based on usage patterns."""
-
-    # Victorian TOU rates and supply charge, sourced from the shared tariff module so
-    # every feature prices intervals identically.
-    RATES = DEFAULT_TOU_RATES
-    DAILY_SUPPLY_CHARGE = DEFAULT_SUPPLY_CHARGE  # $/day
+    """Projects end-of-month usage; tariff-backed bill pricing is not implemented."""
 
     def __init__(self, db: Session):
         """Initialize the forecaster with database session."""
         self.db = db
-
-    def _calculate_daily_cost(self, readings: list[Reading]) -> float:
-        """Calculate cost for a day's readings."""
-        total_cost = 0.0
-
-        for reading in readings:
-            if reading.timestamp:
-                period = classify_tou_period(reading.timestamp)
-                total_cost += reading.value * self.RATES[period]
-
-        return total_cost + self.DAILY_SUPPLY_CHARGE
 
     def forecast_monthly_bill(
         self,
@@ -52,53 +35,66 @@ class BillForecaster:
         Returns:
             Dictionary with forecast details
         """
+        meter_state = (
+            self.db.query(Meter.state).filter(Meter.id == meter_id).scalar()
+        )
+        if meter_state is None:
+            raise ValueError(f"Meter {meter_id} was not found; cannot determine tariff timezone")
+        today = datetime.now(timezone_for_state(meter_state)).date()
         if target_month is None:
-            target_month = date.today()
+            target_month = today
 
         # Get first and last day of month
         first_day = target_month.replace(day=1)
         if target_month.month == 12:
-            last_day = target_month.replace(year=target_month.year + 1, month=1, day=1) - timedelta(days=1)
+            last_day = (
+                target_month.replace(year=target_month.year + 1, month=1, day=1)
+                - timedelta(days=1)
+            )
         else:
-            last_day = target_month.replace(month=target_month.month + 1, day=1) - timedelta(days=1)
+            last_day = (
+                target_month.replace(month=target_month.month + 1, day=1)
+                - timedelta(days=1)
+            )
         
         days_in_month = (last_day - first_day).days + 1
-        days_elapsed = min((date.today() - first_day).days + 1, days_in_month)
+        days_elapsed = min(max((today - first_day).days + 1, 0), days_in_month)
         days_remaining = days_in_month - days_elapsed
 
         # Get readings for current month so far
-        readings_so_far = (
-            self.db.query(Reading)
-            .filter(
-                Reading.meter_id == meter_id,
-                Reading.timestamp >= first_day,
-                Reading.timestamp < date.today() + timedelta(days=1),
+        current_end = min(today, last_day)
+        readings_so_far = []
+        if current_end >= first_day:
+            market_start, market_end = market_bounds_for_local_dates(
+                first_day, current_end, meter_state
             )
-            .all()
-        )
+            readings_so_far = (
+                self.db.query(Reading)
+                .filter(
+                    Reading.meter_id == meter_id,
+                    consumption_reading_filter(),
+                    Reading.timestamp > market_start,
+                    Reading.timestamp <= market_end,
+                )
+                .all()
+            )
 
-        # Calculate usage so far
+        # Calculate usage so far. Cost is omitted rather than priced with a default rate.
         usage_so_far = sum(r.value for r in readings_so_far)
-        cost_so_far = 0.0
-        
-        # Group by day for cost calculation
-        from collections import defaultdict
-        daily_readings: dict[date, list[Reading]] = defaultdict(list)
-        for r in readings_so_far:
-            if r.timestamp:
-                daily_readings[r.timestamp.date()].append(r)
-        
-        for day_readings in daily_readings.values():
-            cost_so_far += self._calculate_daily_cost(day_readings)
 
         # Get historical data for same period last month
-        last_month = first_day - timedelta(days=30)
+        previous_month_end = first_day - timedelta(days=1)
+        previous_month_start = previous_month_end.replace(day=1)
+        historical_start, historical_end = market_bounds_for_local_dates(
+            previous_month_start, previous_month_end, meter_state
+        )
         historical_readings = (
             self.db.query(Reading)
             .filter(
                 Reading.meter_id == meter_id,
-                Reading.timestamp >= last_month,
-                Reading.timestamp < first_day,
+                consumption_reading_filter(),
+                Reading.timestamp > historical_start,
+                Reading.timestamp <= historical_end,
             )
             .all()
         )
@@ -106,7 +102,7 @@ class BillForecaster:
         # Calculate historical daily average
         if historical_readings:
             historical_total = sum(r.value for r in historical_readings)
-            historical_days = 30
+            historical_days = (previous_month_end - previous_month_start).days + 1
             historical_daily_avg = historical_total / historical_days
         else:
             # Fallback to this month's average
@@ -125,18 +121,8 @@ class BillForecaster:
 
         # Project remaining usage
         projected_remaining_usage = projected_daily_avg * days_remaining
-        projected_remaining_cost = (
-            projected_remaining_usage * 0.27 +  # Average rate
-            days_remaining * self.DAILY_SUPPLY_CHARGE
-        )
 
-        # Calculate totals
         projected_total_usage = usage_so_far + projected_remaining_usage
-        projected_total_cost = cost_so_far + projected_remaining_cost
-
-        # Calculate confidence interval (wider with less data)
-        std_dev = max(current_daily_avg * 0.2, 1.0)  # 20% std dev
-        confidence_margin = 1.96 * std_dev * np.sqrt(days_remaining)  # 95% CI
 
         return {
             "meter_id": meter_id,
@@ -145,13 +131,13 @@ class BillForecaster:
             "days_elapsed": days_elapsed,
             "days_remaining": days_remaining,
             "usage_so_far_kwh": round(usage_so_far, 2),
-            "cost_so_far": round(cost_so_far, 2),
+            "cost_so_far": None,
             "projected_total_kwh": round(projected_total_usage, 2),
-            "projected_total_cost": round(projected_total_cost, 2),
-            "projected_cost_low": round(max(projected_total_cost - confidence_margin * 0.27, cost_so_far), 2),
-            "projected_cost_high": round(projected_total_cost + confidence_margin * 0.27, 2),
+            "projected_total_cost": None,
+            "projected_cost_low": None,
+            "projected_cost_high": None,
             "daily_average_kwh": round(current_daily_avg, 2),
-            "confidence_level": 0.95,
+            "confidence_level": None,
         }
 
     def get_bill_trend(
@@ -169,7 +155,10 @@ class BillForecaster:
             List of monthly bill summaries
         """
         results = []
-        today = date.today()
+        state = self.db.query(Meter.state).filter(Meter.id == meter_id).scalar()
+        if state is None:
+            raise ValueError(f"Meter {meter_id} was not found; cannot determine tariff timezone")
+        today = datetime.now(timezone_for_state(state)).date()
 
         for i in range(months):
             # Calculate target month
@@ -182,36 +171,34 @@ class BillForecaster:
                 last_day = target.replace(month=target.month + 1, day=1) - timedelta(days=1)
 
             # Get readings for this month
+            market_start, market_end = market_bounds_for_local_dates(
+                first_day, last_day, state
+            )
             readings = (
                 self.db.query(Reading)
                 .filter(
                     Reading.meter_id == meter_id,
-                    Reading.timestamp >= first_day,
-                    Reading.timestamp <= last_day,
+                    consumption_reading_filter(),
+                    Reading.timestamp > market_start,
+                    Reading.timestamp <= market_end,
                 )
                 .all()
             )
 
             if readings:
                 total_kwh = sum(r.value for r in readings)
-                
-                # Group by day for cost calculation
-                from collections import defaultdict
-                daily_readings: dict[date, list[Reading]] = defaultdict(list)
-                for r in readings:
-                    if r.timestamp:
-                        daily_readings[r.timestamp.date()].append(r)
-                
-                total_cost = sum(
-                    self._calculate_daily_cost(day_readings) 
-                    for day_readings in daily_readings.values()
-                )
 
                 results.append({
                     "month": first_day.strftime("%Y-%m"),
                     "total_kwh": round(total_kwh, 2),
-                    "total_cost": round(total_cost, 2),
-                    "days_with_data": len(daily_readings),
+                    "total_cost": None,
+                    "days_with_data": len(
+                        {
+                            local_interval_end_date(reading.timestamp, state)
+                            for reading in readings
+                            if reading.timestamp is not None
+                        }
+                    ),
                 })
 
         return list(reversed(results))

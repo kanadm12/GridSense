@@ -9,6 +9,7 @@ from app.api.meters import router as meters_router
 from app.api.notifications import router as notifications_router
 from app.api.password_reset import router as password_reset_router
 from app.api.recommendations import router as recommendations_router
+from app.api.scheduling import router as scheduling_router
 from app.api.tariffs import router as tariffs_router
 from app.api.upload import router as upload_router
 from app.api.usage import router as usage_router
@@ -23,6 +24,7 @@ __all__ = [
     "notifications_router",
     "password_reset_router",
     "recommendations_router",
+    "scheduling_router",
     "tariffs_router",
     "upload_router",
     "usage_router",

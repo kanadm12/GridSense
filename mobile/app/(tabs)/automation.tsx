@@ -46,8 +46,8 @@ interface AutomationSuggestion {
   device_type: string;
   suggestion_title: string;
   description: string;
-  potential_savings_dollars: number;
-  confidence: number;
+  potential_savings_dollars: number | null;
+  confidence: number | null;
 }
 
 interface GridSignal {
@@ -350,7 +350,7 @@ export default function AutomationScreen() {
               <Ionicons name="timer-outline" size={48} color="#9CA3AF" />
               <Text style={styles.emptyText}>No automations yet</Text>
               <Text style={styles.emptySubtext}>
-                Set up automations to save energy automatically
+                Set up automations to coordinate compatible device operation
               </Text>
             </View>
           ) : (
@@ -361,11 +361,6 @@ export default function AutomationScreen() {
                   <Text style={styles.automationTrigger}>
                     Trigger: {automation.trigger_type}
                   </Text>
-                  {automation.estimated_savings_dollars && (
-                    <Text style={styles.automationSavings}>
-                      Est. savings: ${automation.estimated_savings_dollars.toFixed(2)}/month
-                    </Text>
-                  )}
                   <TouchableOpacity
                     style={styles.runButton}
                     onPress={() => runAutomation(automation)}
@@ -400,8 +395,8 @@ export default function AutomationScreen() {
               </View>
               <Text style={styles.suggestionDescription}>{suggestion.description}</Text>
               <View style={styles.suggestionFooter}>
-                <Text style={styles.suggestionSavings}>
-                  Save up to ${suggestion.potential_savings_dollars.toFixed(2)}/month
+                <Text style={styles.suggestionDisclaimer}>
+                  Example schedule · no savings estimate
                 </Text>
                 <TouchableOpacity style={styles.applyButton}>
                   <Text style={styles.applyButtonText}>Apply</Text>
@@ -674,11 +669,6 @@ const styles = StyleSheet.create({
     color: '#6B7280',
     marginTop: 4,
   },
-  automationSavings: {
-    fontSize: 13,
-    color: '#10B981',
-    marginTop: 4,
-  },
   runButton: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -726,10 +716,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginTop: 12,
   },
-  suggestionSavings: {
+  suggestionDisclaimer: {
     fontSize: 14,
-    fontWeight: '600',
-    color: '#10B981',
+    color: '#6B7280',
   },
   applyButton: {
     backgroundColor: '#2563EB',

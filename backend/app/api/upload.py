@@ -1,23 +1,59 @@
 """NEM12 file upload endpoints."""
 
-from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status, BackgroundTasks
 import hashlib
+import logging
+
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    File,
+    HTTPException,
+    Request,
+    UploadFile,
+    status,
+)
 from pydantic import BaseModel
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
-from app.rate_limit import limiter
-from app.database import get_db
-from app.models.meter import Meter
-from app.models.reading import Reading
-from app.models.user import User
-from app.services.nem12_parser import NEM12Parser
-from app.services.nem12_importer import NEM12Importer
+from app.database import SessionLocal, get_db
 from app.models.upload import NEM12Upload
-from app.schemas.reading import ReadingBulkCreate
-from typing import Optional
+from app.models.user import User
+from app.rate_limit import limiter
+from app.services.nem12_importer import NEM12Importer
+from app.services.nem12_parser import NEM12Parser
 
 router = APIRouter(prefix="/upload", tags=["Upload"])
+MAX_UPLOAD_SIZE_BYTES = 50 * 1024 * 1024
+logger = logging.getLogger(__name__)
+
+
+def import_nem12_in_process(
+    upload_id: int,
+    user_id: int,
+    content: bytes,
+    filename: str | None,
+) -> None:
+    """Run the non-durable Redis fallback with a task-owned database session."""
+    db = SessionLocal()
+    try:
+        NEM12Importer().import_file(
+            db,
+            user_id,
+            content,
+            filename=filename,
+            upload_id=upload_id,
+        )
+    except Exception as exc:
+        logger.error(
+            "In-process NEM12 import failed",
+            extra={"upload_id": upload_id, "error_type": type(exc).__name__},
+        )
+        raise
+    finally:
+        db.close()
 
 
 class UploadResponse(BaseModel):
@@ -65,16 +101,16 @@ async def upload_nem12(
 
     # Read file content
     try:
-        content = await file.read()
-        if len(content) > 50 * 1024 * 1024:  # 50MB limit
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="File too large (max 50MB)",
-            )
-    except Exception as e:
+        content = await file.read(MAX_UPLOAD_SIZE_BYTES + 1)
+    except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Error reading file: {str(e)}",
+            detail="Unable to read the uploaded file.",
+        ) from exc
+    if len(content) > MAX_UPLOAD_SIZE_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="File too large (max 50MB)",
         )
 
     # Validate NEM12 format
@@ -90,53 +126,131 @@ async def upload_nem12(
     # If this exact file was already imported for this user, return existing upload
     existing = (
         db.query(NEM12Upload)
-        .filter(NEM12Upload.user_id == current_user.id, NEM12Upload.file_hash == file_hash, NEM12Upload.status == "completed")
+        .filter(
+            NEM12Upload.user_id == current_user.id,
+            NEM12Upload.file_hash == file_hash,
+        )
+        .with_for_update()
         .first()
     )
-    if existing:
-        return UploadAccepted(upload_id=existing.id, message="File already imported previously")
+    if existing is not None:
+        if existing.status == "completed":
+            return UploadAccepted(
+                upload_id=existing.id,
+                message="File already imported previously",
+            )
+        if existing.status in {"pending", "processing"}:
+            if existing.rq_job_id:
+                from app.tasks import get_job_status
 
-    # Create upload record in DB (pending) and schedule background import
-    upload = NEM12Upload(user_id=current_user.id, filename=file.filename, status="pending", file_hash=file_hash)
-    db.add(upload)
-    db.commit()
-    db.refresh(upload)
-
-    importer = NEM12Importer()
+                queue_status = get_job_status(existing.rq_job_id)
+                if (
+                    queue_status in {"failed", "stopped", "canceled", "finished"}
+                    or queue_status is None
+                ):
+                    logger.info(
+                        "Retrying a failed NEM12 queue job",
+                        extra={"upload_id": existing.id, "rq_job_status": queue_status},
+                    )
+                else:
+                    return UploadAccepted(
+                        upload_id=existing.id,
+                        message="An upload with this content is already pending or processing",
+                    )
+            else:
+                return UploadAccepted(
+                    upload_id=existing.id,
+                    message="An upload with this content is already pending or processing",
+                )
+        existing.status = "pending"
+        existing.progress_percent = 0
+        existing.errors = None
+        existing.warnings = None
+        existing.rq_job_id = None
+        upload = existing
+    else:
+        upload = NEM12Upload(
+            user_id=current_user.id,
+            filename=file.filename,
+            status="pending",
+            file_hash=file_hash,
+        )
+        db.add(upload)
+    try:
+        db.commit()
+        db.refresh(upload)
+    except IntegrityError:
+        db.rollback()
+        existing = (
+            db.query(NEM12Upload)
+            .filter(
+                NEM12Upload.user_id == current_user.id,
+                NEM12Upload.file_hash == file_hash,
+            )
+            .first()
+        )
+        if existing is None:
+            raise
+        return UploadAccepted(
+            upload_id=existing.id,
+            message="An upload with this content already exists",
+        )
 
     # Try to enqueue via RQ; if Redis isn't available, fallback to BackgroundTasks
     try:
         from app.tasks import enqueue_import
 
         job_id = enqueue_import(content, current_user.id, file.filename, upload.id)
-        # store job id on upload for tracking
         upload.rq_job_id = job_id
-        db.add(upload)
         db.commit()
-    except Exception:
-        # fallback to in-process background task
-        background_tasks.add_task(importer.import_file, db, current_user.id, content, file.filename, upload.id)
+    except Exception as exc:
+        db.rollback()
+        logger.warning(
+            "NEM12 queue unavailable; using in-process fallback",
+            extra={"upload_id": upload.id, "error_type": type(exc).__name__},
+        )
+        background_tasks.add_task(
+            import_nem12_in_process,
+            upload.id,
+            current_user.id,
+            content,
+            file.filename,
+        )
 
-    return UploadAccepted(upload_id=upload.id, message="Upload accepted and processing started")
+    return UploadAccepted(
+        upload_id=upload.id,
+        message="Upload accepted and processing started",
+    )
 
 
 @router.get("/{upload_id}")
-async def get_upload_status(upload_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)) -> dict:
+async def get_upload_status(
+    upload_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict:
     """Get the status of a previously uploaded NEM12 file."""
-    upload = db.query(NEM12Upload).filter(NEM12Upload.id == upload_id, NEM12Upload.user_id == current_user.id).first()
+    upload = (
+        db.query(NEM12Upload)
+        .filter(NEM12Upload.id == upload_id, NEM12Upload.user_id == current_user.id)
+        .first()
+    )
     if not upload:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Upload not found")
 
     # Attempt to fetch job status from Redis if present
-    job_id: Optional[str] = getattr(upload, "rq_job_id", None)
-    job_status: Optional[str] = None
+    job_id = upload.rq_job_id
+    job_status = "unavailable" if job_id else None
     if job_id:
         try:
             from app.tasks import get_job_status
 
             job_status = get_job_status(job_id)
-        except Exception:
-            job_status = None
+        except Exception as exc:
+            logger.warning(
+                "Unable to retrieve upload job status",
+                extra={"upload_id": upload.id, "error_type": type(exc).__name__},
+            )
 
     return {
         "id": upload.id,

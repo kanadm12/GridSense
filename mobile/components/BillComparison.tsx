@@ -21,14 +21,33 @@ interface BillComparisonData {
     previous_days: number;
     previous_daily_avg_kwh: number;
     kwh_change: number;
-    kwh_change_percent: number;
+    kwh_change_percent: number | null;
     cost_change: number;
-    cost_change_percent: number;
-    daily_avg_change_percent: number;
-    trend: 'up' | 'down' | 'stable';
+    cost_change_percent: number | null;
+    daily_avg_change_percent: number | null;
+    trend: 'up' | 'down' | 'stable' | 'unavailable';
     insight: string;
   };
   recommendations: string[];
+  current_breakdown: BillPeriodBreakdownData;
+  previous_breakdown: BillPeriodBreakdownData;
+}
+
+interface BillPeriodBreakdownData {
+  start_date: string;
+  end_date: string;
+  estimate_type: 'illustrative' | 'configured_tariff_estimate';
+  tariff_status: string;
+  data_status: string;
+  gst_treatment: string;
+  gst_amount: number;
+  total_cost: number;
+  line_items: Array<{
+    label: string;
+    amount: number;
+    included_in_total: boolean;
+  }>;
+  limitations: string[];
 }
 
 interface BillComparisonProps {
@@ -59,8 +78,8 @@ export default function BillComparison({
         const end = currentEnd || now;
 
         const params = new URLSearchParams({
-          current_start: start.toISOString().split('T')[0],
-          current_end: end.toISOString().split('T')[0],
+          current_start: formatLocalDate(start),
+          current_end: formatLocalDate(end),
         });
 
         const response = await api.get(`/billing/comparison/${meterId}?${params}`);
@@ -92,8 +111,8 @@ export default function BillComparison({
       const end = currentEnd || now;
 
       const params = new URLSearchParams({
-        current_start: start.toISOString().split('T')[0],
-        current_end: end.toISOString().split('T')[0],
+        current_start: formatLocalDate(start),
+        current_end: formatLocalDate(end),
       });
 
       const response = await api.get(`/billing/comparison/${meterId}?${params}`);
@@ -135,6 +154,10 @@ export default function BillComparison({
   const trendColor =
     comparison.trend === 'down' ? Colors.success :
     comparison.trend === 'up' ? Colors.error : Colors.textSecondary;
+  const trendLabel =
+    comparison.trend === 'unavailable' ? 'Unavailable' :
+    comparison.trend === 'stable' ? 'Stable' :
+    comparison.trend === 'down' ? 'Improved' : 'Increased';
 
   return (
     <View style={styles.container}>
@@ -147,8 +170,7 @@ export default function BillComparison({
         <View style={[styles.trendBadge, { backgroundColor: trendColor + '15' }]}>
           <Ionicons name={trendIcon} size={16} color={trendColor} />
           <Text style={[styles.trendText, { color: trendColor }]}>
-            {comparison.trend === 'stable' ? 'Stable' : 
-             comparison.trend === 'down' ? 'Improved' : 'Increased'}
+            {trendLabel}
           </Text>
         </View>
       </View>
@@ -168,15 +190,35 @@ export default function BillComparison({
         {/* Change indicator */}
         <View style={styles.changeIndicator}>
           <Ionicons
-            name={comparison.cost_change >= 0 ? 'arrow-up' : 'arrow-down'}
+            name={
+              comparison.cost_change_percent === null
+                ? 'remove'
+                : comparison.cost_change >= 0
+                  ? 'arrow-up'
+                  : 'arrow-down'
+            }
             size={24}
-            color={comparison.cost_change >= 0 ? Colors.error : Colors.success}
+            color={
+              comparison.cost_change_percent === null
+                ? Colors.textSecondary
+                : comparison.cost_change >= 0
+                  ? Colors.error
+                  : Colors.success
+            }
           />
           <Text style={[
             styles.changeValue,
-            { color: comparison.cost_change >= 0 ? Colors.error : Colors.success }
+            {
+              color: comparison.cost_change_percent === null
+                ? Colors.textSecondary
+                : comparison.cost_change >= 0
+                  ? Colors.error
+                  : Colors.success,
+            }
           ]}>
-            {comparison.cost_change >= 0 ? '+' : ''}{comparison.cost_change_percent.toFixed(1)}%
+            {comparison.cost_change_percent === null
+              ? 'N/A'
+              : `${comparison.cost_change >= 0 ? '+' : ''}${comparison.cost_change_percent.toFixed(1)}%`}
           </Text>
         </View>
 
@@ -212,6 +254,9 @@ export default function BillComparison({
         />
       </View>
 
+      <BillBreakdownCard title="This period" breakdown={data.current_breakdown} />
+      <BillBreakdownCard title="Last period" breakdown={data.previous_breakdown} />
+
       {/* Insight */}
       <View style={styles.insightCard}>
         <Ionicons name="bulb-outline" size={20} color={Colors.warning} />
@@ -234,7 +279,68 @@ export default function BillComparison({
   );
 }
 
-function StatBox({ label, value, change }: { label: string; value: string; change: number }) {
+function BillBreakdownCard({
+  title,
+  breakdown,
+}: {
+  title: string;
+  breakdown: BillPeriodBreakdownData;
+}) {
+  return (
+    <View style={styles.breakdownCard}>
+      <Text style={styles.breakdownTitle}>
+        {title} · {breakdown.estimate_type === 'illustrative'
+          ? 'Illustrative estimate'
+          : 'Configured-tariff estimate'}
+      </Text>
+      <Text style={styles.breakdownStatus}>
+        {formatDateRange(breakdown.start_date, breakdown.end_date)} ·{' '}
+        {breakdown.data_status.replace(/_/g, ' ')} data · tariff:{' '}
+        {breakdown.tariff_status.replace(/_/g, ' ')} · GST:{' '}
+        {breakdown.gst_treatment.replace(/_/g, ' ')}
+      </Text>
+      {breakdown.line_items.map((item, index) => (
+        <View key={`${item.label}-${index}`} style={styles.breakdownRow}>
+          <Text style={styles.breakdownLabel}>
+            {item.label}{item.included_in_total ? '' : ' (memo)'}
+          </Text>
+          <Text style={styles.breakdownAmount}>
+            ${item.amount.toFixed(2)}
+          </Text>
+        </View>
+      ))}
+      <View style={styles.breakdownTotalRow}>
+        <Text style={styles.breakdownTotalLabel}>Estimated total</Text>
+        <Text style={styles.breakdownTotalAmount}>
+          ${breakdown.total_cost.toFixed(2)}
+        </Text>
+      </View>
+      {breakdown.limitations.map((limitation, index) => (
+        <Text key={index} style={styles.breakdownLimitation}>• {limitation}</Text>
+      ))}
+    </View>
+  );
+}
+
+function StatBox({
+  label,
+  value,
+  change,
+}: {
+  label: string;
+  value: string;
+  change: number | null;
+}) {
+  if (change === null) {
+    return (
+      <View style={styles.statBox}>
+        <Text style={styles.statLabel}>{label}</Text>
+        <Text style={styles.statValue}>{value}</Text>
+        <Text style={[styles.statChange, { color: Colors.textSecondary }]}>N/A</Text>
+      </View>
+    );
+  }
+
   const isPositive = change >= 0;
   const color = isPositive ? Colors.error : Colors.success;
 
@@ -255,6 +361,13 @@ function formatDateRange(start: string, end: string): string {
   const startMonth = startDate.toLocaleDateString('en-AU', { month: 'short', day: 'numeric' });
   const endMonth = endDate.toLocaleDateString('en-AU', { month: 'short', day: 'numeric' });
   return `${startMonth} - ${endMonth}`;
+}
+
+function formatLocalDate(value: Date): string {
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, '0');
+  const day = String(value.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
 }
 
 const styles = StyleSheet.create({
@@ -367,6 +480,62 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: Colors.border,
     marginBottom: Spacing.lg,
+  },
+  breakdownCard: {
+    backgroundColor: Colors.gray100,
+    borderRadius: BorderRadius.md,
+    padding: Spacing.md,
+    marginBottom: Spacing.lg,
+  },
+  breakdownTitle: {
+    color: Colors.text,
+    fontSize: FontSize.md,
+    fontWeight: FontWeight.semibold,
+  },
+  breakdownStatus: {
+    color: Colors.textSecondary,
+    fontSize: FontSize.xs,
+    marginTop: Spacing.xs,
+    marginBottom: Spacing.sm,
+  },
+  breakdownRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingVertical: Spacing.xs,
+  },
+  breakdownLabel: {
+    flex: 1,
+    color: Colors.textSecondary,
+    fontSize: FontSize.sm,
+  },
+  breakdownAmount: {
+    color: Colors.text,
+    fontSize: FontSize.sm,
+    fontWeight: FontWeight.medium,
+    marginLeft: Spacing.sm,
+  },
+  breakdownTotalRow: {
+    borderTopWidth: 1,
+    borderTopColor: Colors.border,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingTop: Spacing.sm,
+    marginTop: Spacing.xs,
+  },
+  breakdownTotalLabel: {
+    color: Colors.text,
+    fontSize: FontSize.md,
+    fontWeight: FontWeight.bold,
+  },
+  breakdownTotalAmount: {
+    color: Colors.primary,
+    fontSize: FontSize.md,
+    fontWeight: FontWeight.bold,
+  },
+  breakdownLimitation: {
+    color: Colors.warning,
+    fontSize: FontSize.xs,
+    marginTop: Spacing.sm,
   },
   statBox: {
     flex: 1,

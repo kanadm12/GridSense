@@ -100,6 +100,13 @@ export default function UsageScreen() {
         </TouchableOpacity>
       </View>
 
+      {chartType === 'daily' && (
+        <Text style={styles.costNotice}>
+          Daily cost estimates are unavailable. Use the dashboard bill comparison for
+          tariff-backed estimates.
+        </Text>
+      )}
+
       {/* Chart Card */}
       <View style={styles.chartCard}>
         <Text style={styles.chartTitle}>
@@ -170,7 +177,7 @@ export default function UsageScreen() {
               </View>
               <View style={styles.dayStats}>
                 <Text style={styles.dayValue}>{day.total_kwh.toFixed(1)} kWh</Text>
-                {day.estimated_cost && (
+                {day.estimated_cost !== null && (
                   <Text style={styles.dayCost}>${day.estimated_cost.toFixed(2)}</Text>
                 )}
               </View>
@@ -250,6 +257,11 @@ const styles = StyleSheet.create({
     padding: Spacing.md,
     marginBottom: Spacing.md,
     ...Shadow.md,
+  },
+  costNotice: {
+    color: Colors.textSecondary,
+    fontSize: FontSize.sm,
+    marginBottom: Spacing.md,
   },
   chartTitle: {
     fontSize: FontSize.md,

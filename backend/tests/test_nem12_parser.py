@@ -1,7 +1,8 @@
 """Tests for NEM12 parser."""
 
-import pytest
 from pathlib import Path
+
+import pytest
 
 from app.services.nem12_parser import NEM12Parser
 
@@ -96,6 +97,121 @@ class TestNEM12Parser:
         # All readings should have estimated quality
         for reading in result.meters[0].readings:
             assert reading.quality == "E"
+
+    def test_multiple_registers_and_interval_quality_events(self):
+        values = ["1.0"] * 48
+        values[0] = ""
+        interval_values = ",".join(values)
+        content = (
+            "100,NEM12,202504011200,TEST,AEMO\n"
+            "200,1234567890,E1,1,E1,N1,SERIAL1,kWh,30,\n"
+            f"300,20250401,{interval_values},V,,,\n"
+            "400,1,24,A,,\n"
+            "400,25,48,S53,9,Substituted interval\n"
+            "200,1234567890,E1,2,B1,N2,SERIAL2,kWh,30,\n"
+            f"300,20250401,{','.join(['2.0'] * 48)},A,,,\n"
+            "900\n"
+        )
+
+        result = NEM12Parser().parse(content)
+
+        assert not result.errors
+        assert len(result.meters) == 2
+        first_register, second_register = result.meters
+        assert first_register.register_id == "1"
+        assert second_register.register_id == "2"
+        assert len(first_register.readings) == 47
+        assert first_register.readings[0].timestamp.hour == 1
+        assert first_register.readings[0].quality == "A"
+        assert first_register.readings[24].quality_method == "S53"
+        assert first_register.readings[24].reason_code == "9"
+        assert first_register.readings[24].reason_description == "Substituted interval"
+        assert first_register.readings[-1].quality == "S"
+        assert second_register.readings[0].value == 2.0
+        assert all(reading.direction == "unknown" for meter in result.meters for reading in meter.readings)
+        assert all(reading.register_type == "U" for meter in result.meters for reading in meter.readings)
+        assert any("Direction is unresolved" in warning for warning in result.warnings)
+
+    def test_short_interval_record_and_invalid_value_are_reported(self):
+        content = """100,NEM12,202504011200,TEST,AEMO
+200,1234567890,E1,1,E1,N1,SERIAL1,kWh,30,
+300,20250401,1.0,,not-a-number
+900"""
+
+        result = NEM12Parser().parse(content)
+
+        assert len(result.meters[0].readings) == 1
+        assert result.meters[0].readings[0].value == 1.0
+        assert any("Expected 48 intervals" in warning for warning in result.warnings)
+        assert any("Missing value at interval 2" in warning for warning in result.warnings)
+        assert any("Invalid value at interval 3" in warning for warning in result.warnings)
+        assert result.meters[0].readings[0].quality == "U"
+
+    def test_shortened_interval_record_keeps_trailing_quality_metadata(self):
+        values = ",".join(["0.5"] * 47)
+        content = (
+            "100,NEM12,202504011200,TEST,AEMO\n"
+            "200,1234567890,E1,1,E1,N1,SERIAL1,kWh,30,\n"
+            f"300,20250401,{values},E52,9,Estimated replacement,,\n"
+            "900\n"
+        )
+
+        result = NEM12Parser().parse(content)
+
+        assert len(result.meters[0].readings) == 47
+        assert result.meters[0].readings[-1].quality_method == "E52"
+        assert result.meters[0].readings[-1].reason_code == "9"
+        assert any("Expected 48 intervals, got 47" in warning for warning in result.warnings)
+
+    def test_missing_daily_record_is_reported_as_coverage_gap(self):
+        values = ",".join(["0.5"] * 48)
+        content = (
+            "100,NEM12,202504011200,TEST,AEMO\n"
+            "200,1234567890,E1,1,E1,N1,SERIAL1,kWh,30,\n"
+            f"300,20250401,{values},A,,,\n"
+            f"300,20250403,{values},A,,,\n"
+            "900\n"
+        )
+
+        result = NEM12Parser().parse(content)
+
+        assert any("1 missing daily interval record" in warning for warning in result.warnings)
+
+    def test_wh_values_are_converted_and_unsupported_units_are_omitted(self):
+        values = ",".join(["1000"] * 48)
+        content = (
+            "100,NEM12,202504011200,TEST,AEMO\n"
+            "200,1234567890,E1,1,E1,N1,SERIAL1,Wh,30,\n"
+            f"300,20250401,{values},A,,,\n"
+            "200,1234567890,E1,2,E2,N2,SERIAL2,kW,30,\n"
+            f"300,20250401,{values},A,,,\n"
+            "900\n"
+        )
+
+        result = NEM12Parser().parse(content)
+
+        assert result.meters[0].readings[0].value == 1.0
+        assert result.meters[1].readings == []
+        assert any("Unsupported UOM 'kW'" in warning for warning in result.warnings)
+
+    @pytest.mark.parametrize("interval_minutes", [5, 15, 30])
+    def test_interval_count_matches_declared_length(self, interval_minutes):
+        interval_count = 1440 // interval_minutes
+        values = ",".join(["0.25"] * interval_count)
+        content = (
+            "100,NEM12,202504011200,TEST,AEMO\n"
+            f"200,1234567890,E1,1,E1,N1,SERIAL1,kWh,{interval_minutes},\n"
+            f"300,20250401,{values},A,,,\n"
+            "900\n"
+        )
+
+        result = NEM12Parser().parse(content)
+
+        readings = result.meters[0].readings
+        assert len(readings) == interval_count
+        assert sum(reading.value for reading in readings) == pytest.approx(interval_count * 0.25)
+        assert readings[-1].timestamp.date().isoformat() == "2025-04-02"
+        assert readings[-1].timestamp.time().isoformat() == "00:00:00"
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -10,13 +10,27 @@ import {
 } from 'react-native';
 import { router } from 'expo-router';
 import { useMetersStore, useUsageStore, useAuthStore } from '@/stores';
+import BillComparison from '@/components/BillComparison';
 import { Colors, Spacing, BorderRadius, FontSize, FontWeight, Shadow } from '@/constants/theme';
 import { Ionicons } from '@expo/vector-icons';
 
 export default function DashboardScreen() {
   const { user } = useAuthStore();
-  const { meters, selectedMeter, fetchMeters, isLoading: metersLoading } = useMetersStore();
-  const { summary, fetchAllUsageData, isLoading: usageLoading } = useUsageStore();
+  const {
+    meters,
+    selectedMeter,
+    fetchMeters,
+    selectMeter,
+    isLoading: metersLoading,
+    error: metersError,
+  } = useMetersStore();
+  const {
+    summary,
+    fetchAllUsageData,
+    isLoading: usageLoading,
+    error: usageError,
+  } = useUsageStore();
+  const [meterSelectorOpen, setMeterSelectorOpen] = useState(false);
 
   const isLoading = metersLoading || usageLoading;
 
@@ -55,6 +69,12 @@ export default function DashboardScreen() {
           <Text style={styles.emptyText}>
             Upload your NEM12 smart meter data to start tracking your energy usage.
           </Text>
+          {metersError && (
+            <View style={styles.errorCard}>
+              <Text style={styles.errorTitle}>Could not load meters</Text>
+              <Text style={styles.errorMessage}>{metersError}</Text>
+            </View>
+          )}
           <TouchableOpacity
             style={styles.uploadButton}
             onPress={() => router.push('/upload')}
@@ -93,12 +113,65 @@ export default function DashboardScreen() {
       {meters.length > 1 && (
         <View style={styles.meterSelector}>
           <Text style={styles.sectionLabel}>Viewing meter</Text>
-          <TouchableOpacity style={styles.meterButton}>
+          <TouchableOpacity
+            style={styles.meterButton}
+            onPress={() => setMeterSelectorOpen(!meterSelectorOpen)}
+            accessibilityRole="button"
+            accessibilityLabel="Select meter"
+          >
             <Ionicons name="flash" size={18} color={Colors.primary} />
             <Text style={styles.meterText}>
-              {selectedMeter?.name || selectedMeter?.nmi.slice(-4)}
+              {selectedMeter?.name || selectedMeter?.nmi.slice(-4) || 'Select meter'}
             </Text>
             <Ionicons name="chevron-down" size={18} color={Colors.gray400} />
+          </TouchableOpacity>
+          {meterSelectorOpen && meters.map((meter) => (
+            <TouchableOpacity
+              key={meter.id}
+              style={[
+                styles.meterOption,
+                meter.id === selectedMeter?.id && styles.selectedMeterOption,
+              ]}
+              onPress={() => {
+                selectMeter(meter);
+                setMeterSelectorOpen(false);
+              }}
+            >
+              <Text style={styles.meterOptionText}>
+                {meter.name || `Meter ending ${meter.nmi.slice(-4)}`}
+              </Text>
+              {meter.id === selectedMeter?.id && (
+                <Ionicons name="checkmark" size={18} color={Colors.primary} />
+              )}
+            </TouchableOpacity>
+          ))}
+        </View>
+      )}
+
+      {metersError && (
+        <View style={styles.errorCard}>
+          <Text style={styles.errorTitle}>Meter selection issue</Text>
+          <Text style={styles.errorMessage}>{metersError}</Text>
+        </View>
+      )}
+
+      {usageError && (
+        <View style={styles.errorCard}>
+          <Text style={styles.errorTitle}>Usage is unavailable</Text>
+          <Text style={styles.errorMessage}>{usageError}</Text>
+          <Text style={styles.errorHint}>
+            Check the import warnings and confirm the file contains readings that can be classified as consumption.
+          </Text>
+          <TouchableOpacity
+            style={styles.uploadButton}
+            onPress={() => router.push('/scheduling')}
+            accessibilityRole="button"
+            accessibilityLabel="Preview a schedule using a synthetic baseline"
+          >
+            <Ionicons name="calendar-outline" size={20} color={Colors.white} />
+            <Text style={styles.uploadButtonText}>
+              Preview a schedule with synthetic baseline
+            </Text>
           </TouchableOpacity>
         </View>
       )}
@@ -122,9 +195,11 @@ export default function DashboardScreen() {
             <View style={styles.statCard}>
               <Ionicons name="wallet-outline" size={24} color={Colors.primary} />
               <Text style={[styles.statValue, styles.darkText]}>
-                {formatCurrency(summary.estimated_total_cost)}
+                {summary.estimated_total_cost === null
+                  ? 'Unavailable'
+                  : formatCurrency(summary.estimated_total_cost)}
               </Text>
-              <Text style={[styles.statLabel, styles.darkLabel]}>Est. Cost</Text>
+              <Text style={[styles.statLabel, styles.darkLabel]}>Cost estimate</Text>
             </View>
           </View>
 
@@ -176,10 +251,23 @@ export default function DashboardScreen() {
                 </View>
                 <Text style={styles.actionText}>Upload Data</Text>
               </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.actionCard}
+                onPress={() => router.push('/scheduling')}
+                accessibilityRole="button"
+                accessibilityLabel="Plan an appliance task"
+              >
+                <View style={[styles.actionIcon, { backgroundColor: Colors.accent + '20' }]}>
+                  <Ionicons name="calendar-outline" size={24} color={Colors.accent} />
+                </View>
+                <Text style={styles.actionText}>Plan a Task</Text>
+              </TouchableOpacity>
             </View>
           </View>
         </>
       ) : null}
+      {selectedMeter && <BillComparison meterId={selectedMeter.id} />}
     </ScrollView>
   );
 }
@@ -232,6 +320,45 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: FontSize.md,
     color: Colors.text,
+  },
+  meterOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: Colors.white,
+    padding: Spacing.sm,
+    borderTopWidth: 1,
+    borderTopColor: Colors.border,
+  },
+  selectedMeterOption: {
+    backgroundColor: Colors.primaryLight + '15',
+  },
+  meterOptionText: {
+    color: Colors.text,
+    fontSize: FontSize.sm,
+  },
+  errorCard: {
+    backgroundColor: Colors.error + '10',
+    borderRadius: BorderRadius.md,
+    borderWidth: 1,
+    borderColor: Colors.error + '30',
+    padding: Spacing.md,
+    marginBottom: Spacing.md,
+  },
+  errorTitle: {
+    color: Colors.error,
+    fontSize: FontSize.sm,
+    fontWeight: FontWeight.semibold,
+  },
+  errorMessage: {
+    color: Colors.text,
+    fontSize: FontSize.sm,
+    marginTop: Spacing.xs,
+  },
+  errorHint: {
+    color: Colors.textSecondary,
+    fontSize: FontSize.xs,
+    marginTop: Spacing.xs,
   },
   loadingCard: {
     backgroundColor: Colors.white,
@@ -312,10 +439,13 @@ const styles = StyleSheet.create({
   },
   actionGrid: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: Spacing.md,
   },
   actionCard: {
-    flex: 1,
+    flexBasis: '47%',
+    flexGrow: 1,
+    maxWidth: '48%',
     backgroundColor: Colors.white,
     borderRadius: BorderRadius.lg,
     padding: Spacing.md,

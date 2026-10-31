@@ -6,6 +6,7 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   Alert,
+  ScrollView,
 } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import { router } from 'expo-router';
@@ -22,6 +23,9 @@ export default function UploadScreen() {
   const [result, setResult] = useState<{
     readingsImported: number;
     warnings: string[];
+    errors: string[];
+    message: string;
+    duplicate: boolean;
   } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -64,12 +68,12 @@ export default function UploadScreen() {
     setError(null);
 
     try {
-      const { upload_id } = await uploadApi.uploadNem12(
+      const accepted = await uploadApi.uploadNem12(
         selectedFile.uri,
         selectedFile.name || 'meter_data.csv'
       );
 
-      const final = await pollUploadStatus(upload_id);
+      const final = await pollUploadStatus(accepted.upload_id);
       if (final.status === 'failed') {
         throw new Error(
           final.errors?.[0] || 'The file could not be processed. Please check the format.'
@@ -79,6 +83,9 @@ export default function UploadScreen() {
       setResult({
         readingsImported: final.total_readings ?? 0,
         warnings: final.warnings ?? [],
+        errors: final.errors ?? [],
+        message: accepted.message,
+        duplicate: accepted.message.toLowerCase().includes('already imported'),
       });
       setState('success');
 
@@ -102,6 +109,7 @@ export default function UploadScreen() {
   const done = () => {
     router.back();
   };
+  const visibleWarnings = result ? getVisibleWarnings(result.warnings) : [];
 
   return (
     <View style={styles.container}>
@@ -114,7 +122,7 @@ export default function UploadScreen() {
         <View style={styles.placeholder} />
       </View>
 
-      <View style={styles.content}>
+      <ScrollView style={styles.content} contentContainerStyle={styles.contentBody}>
         {/* Idle State - File picker */}
         {state === 'idle' && (
           <>
@@ -190,7 +198,14 @@ export default function UploadScreen() {
             <View style={styles.successIcon}>
               <Ionicons name="checkmark-circle" size={64} color={Colors.success} />
             </View>
-            <Text style={styles.successTitle}>Upload Complete!</Text>
+            <Text style={styles.successTitle}>
+              {result.errors.length > 0
+                ? 'Import finished with issues'
+                : result.duplicate
+                  ? 'File already imported'
+                  : 'Upload Complete!'}
+            </Text>
+            <Text style={styles.resultNotice}>{result.message}</Text>
 
             <View style={styles.resultCard}>
               <View style={styles.resultRow}>
@@ -201,6 +216,27 @@ export default function UploadScreen() {
               </View>
             </View>
 
+            {result.errors.length > 0 && (
+              <View style={styles.errorsCard}>
+                <Ionicons name="alert-circle" size={20} color={Colors.error} />
+                <View style={styles.warningsContent}>
+                  <Text style={styles.errorsTitle}>
+                    {result.errors.length} import error(s)
+                  </Text>
+                  {result.errors.slice(0, 5).map((importError, index) => (
+                    <Text key={index} style={styles.warningText}>
+                      • {importError}
+                    </Text>
+                  ))}
+                  {result.errors.length > 5 && (
+                    <Text style={styles.warningText}>
+                      and {result.errors.length - 5} more error(s)
+                    </Text>
+                  )}
+                </View>
+              </View>
+            )}
+
             {result.warnings.length > 0 && (
               <View style={styles.warningsCard}>
                 <Ionicons name="warning" size={20} color={Colors.warning} />
@@ -208,11 +244,16 @@ export default function UploadScreen() {
                   <Text style={styles.warningsTitle}>
                     {result.warnings.length} warning(s)
                   </Text>
-                  {result.warnings.slice(0, 3).map((warning: string, i: number) => (
+                  {visibleWarnings.map((warning, i) => (
                     <Text key={i} style={styles.warningText}>
                       • {warning}
                     </Text>
                   ))}
+                  {result.warnings.length > visibleWarnings.length && (
+                    <Text style={styles.warningText}>
+                      and {result.warnings.length - visibleWarnings.length} more warning(s)
+                    </Text>
+                  )}
                 </View>
               </View>
             )}
@@ -237,7 +278,7 @@ export default function UploadScreen() {
             </TouchableOpacity>
           </>
         )}
-      </View>
+      </ScrollView>
     </View>
   );
 }
@@ -270,7 +311,10 @@ const styles = StyleSheet.create({
   },
   content: {
     flex: 1,
+  },
+  contentBody: {
     padding: Spacing.lg,
+    flexGrow: 1,
   },
   uploadArea: {
     backgroundColor: Colors.white,
@@ -426,6 +470,26 @@ const styles = StyleSheet.create({
     fontWeight: FontWeight.semibold,
     color: Colors.text,
   },
+  resultNotice: {
+    fontSize: FontSize.sm,
+    color: Colors.textSecondary,
+    textAlign: 'center',
+    marginBottom: Spacing.md,
+  },
+  errorsCard: {
+    flexDirection: 'row',
+    backgroundColor: Colors.error + '10',
+    borderRadius: BorderRadius.md,
+    padding: Spacing.md,
+    marginBottom: Spacing.lg,
+    gap: Spacing.sm,
+  },
+  errorsTitle: {
+    fontSize: FontSize.sm,
+    fontWeight: FontWeight.semibold,
+    color: Colors.error,
+    marginBottom: Spacing.xs,
+  },
   warningsCard: {
     flexDirection: 'row',
     backgroundColor: Colors.warning + '10',
@@ -465,3 +529,10 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.lg,
   },
 });
+
+function getVisibleWarnings(warnings: string[]): string[] {
+  const priorityPattern = /direction is unresolved|missing daily interval record|expected \d+ intervals/i;
+  const priority = warnings.filter((warning) => priorityPattern.test(warning));
+  const remaining = warnings.filter((warning) => !priorityPattern.test(warning));
+  return [...priority, ...remaining].slice(0, 5);
+}

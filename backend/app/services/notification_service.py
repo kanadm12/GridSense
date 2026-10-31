@@ -1,14 +1,21 @@
 """Notification service for sending and tracking notifications."""
 
 import json
+import logging
 from datetime import datetime
 from typing import Optional
 
 import httpx
 from sqlalchemy.orm import Session
 
-from app.models.notification import Notification, NotificationType, NotificationPreferences, PushToken
-from app.models.user import User
+from app.models.notification import (
+    Notification,
+    NotificationPreferences,
+    NotificationType,
+    PushToken,
+)
+
+logger = logging.getLogger(__name__)
 
 
 class NotificationService:
@@ -21,7 +28,11 @@ class NotificationService:
 
     def get_or_create_preferences(self, user_id: int) -> NotificationPreferences:
         """Get or create default notification preferences for a user."""
-        prefs = self.db.query(NotificationPreferences).filter(NotificationPreferences.user_id == user_id).first()
+        prefs = (
+            self.db.query(NotificationPreferences)
+            .filter(NotificationPreferences.user_id == user_id)
+            .first()
+        )
         if not prefs:
             prefs = NotificationPreferences(user_id=user_id)
             self.db.add(prefs)
@@ -97,8 +108,14 @@ class NotificationService:
                 success = await self._send_expo_push(token.token, title, message, data)
                 if success:
                     success_count += 1
-            except Exception as e:
-                print(f"Failed to send push to {token.token}: {e}")
+            except Exception as exc:
+                logger.warning(
+                    "Push notification delivery failed",
+                    extra={
+                        "user_id": user_id,
+                        "error_type": type(exc).__name__,
+                    },
+                )
 
         # Update sent_at if at least one was sent
         if success_count > 0:
@@ -108,7 +125,9 @@ class NotificationService:
 
         return success_count > 0
 
-    async def _send_expo_push(self, token: str, title: str, message: str, data: Optional[dict] = None) -> bool:
+    async def _send_expo_push(
+        self, token: str, title: str, message: str, data: Optional[dict] = None
+    ) -> bool:
         """Send a single push notification via Expo."""
         try:
             payload = {
@@ -122,8 +141,11 @@ class NotificationService:
             async with httpx.AsyncClient() as client:
                 response = await client.post(self.EXPO_PUSH_URL, json=payload, timeout=10.0)
                 return response.status_code == 200
-        except Exception as e:
-            print(f"Expo push error: {e}")
+        except Exception as exc:
+            logger.warning(
+                "Expo push request failed",
+                extra={"error_type": type(exc).__name__},
+            )
             return False
 
     def mark_as_read(self, notification_id: int, user_id: int) -> bool:
@@ -143,6 +165,8 @@ class NotificationService:
 
     def get_unread_count(self, user_id: int) -> int:
         """Get count of unread notifications for a user."""
-        return self.db.query(Notification).filter(
-            Notification.user_id == user_id, Notification.is_read == False
-        ).count()
+        return (
+            self.db.query(Notification)
+            .filter(Notification.user_id == user_id, Notification.is_read == False)
+            .count()
+        )

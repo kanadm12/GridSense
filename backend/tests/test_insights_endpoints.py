@@ -84,7 +84,13 @@ def _seed(db) -> tuple[int, int]:
             else:
                 value = 0.5
             readings.append(
-                Reading(meter_id=meter.id, timestamp=ts, value=value, quality="A", register_type="B")
+                Reading(
+                    meter_id=meter.id,
+                    timestamp=ts,
+                    value=value,
+                    quality="A",
+                    register_type="B",
+                )
             )
     db.add_all(readings)
     db.commit()
@@ -129,7 +135,8 @@ class TestInsightsEndpoints:
         body = resp.json()
         assert body["meter_id"] == api.meter_id
         assert body["usage_so_far_kwh"] >= 0
-        assert "projected_total_cost" in body
+        assert body["projected_total_cost"] is None
+        assert body["cost_so_far"] is None
 
     def test_forecast_explicit_meter(self, api):
         resp = api.client.get(f"/api/v1/insights/forecast?meter_id={api.meter_id}")
@@ -172,7 +179,10 @@ class TestBillingEndpoint:
         current_start = current_end - timedelta(days=13)
         resp = api.client.get(
             f"/api/v1/billing/comparison/{api.meter_id}",
-            params={"current_start": current_start.isoformat(), "current_end": current_end.isoformat()},
+            params={
+                "current_start": current_start.isoformat(),
+                "current_end": current_end.isoformat(),
+            },
         )
         assert resp.status_code == 200, resp.text
         body = resp.json()

@@ -7,11 +7,12 @@ import {
   TouchableOpacity,
   TextInput,
   Alert,
+  Platform,
 } from 'react-native';
 import { router } from 'expo-router';
 import { Colors, Spacing, BorderRadius, FontSize, FontWeight, Shadow } from '@/constants/theme';
 import { Ionicons } from '@expo/vector-icons';
-import api from '@/services/api';
+import api, { getErrorMessage } from '@/services/api';
 
 interface TariffPreset {
   id: string;
@@ -26,13 +27,13 @@ interface TariffPreset {
 }
 
 const PRESETS: TariffPreset[] = [
-  { id: 'agl_tou', retailer: 'AGL', plan: 'Time of Use', type: 'tou', peakRate: 38.5, offPeakRate: 18.5, shoulderRate: 25, supplyCharge: 98 },
-  { id: 'agl_flat', retailer: 'AGL', plan: 'Flat Rate', type: 'flat', flatRate: 28.5, supplyCharge: 98 },
-  { id: 'origin_tou', retailer: 'Origin Energy', plan: 'Solar Boost', type: 'tou', peakRate: 42, offPeakRate: 16, shoulderRate: 26.5, supplyCharge: 102 },
-  { id: 'origin_flat', retailer: 'Origin', plan: 'Basic Home', type: 'flat', flatRate: 29, supplyCharge: 102 },
-  { id: 'ea_tou', retailer: 'Energy Australia', plan: 'Flexible', type: 'tou', peakRate: 40, offPeakRate: 17, shoulderRate: 24, supplyCharge: 95 },
-  { id: 'ea_flat', retailer: 'Energy Australia', plan: 'Total Plan', type: 'flat', flatRate: 27.5, supplyCharge: 95 },
-  { id: 'simply_flat', retailer: 'Simply Energy', plan: 'Simply Plus', type: 'flat', flatRate: 26, supplyCharge: 90 },
+  { id: 'agl_residential_tou', retailer: 'AGL', plan: 'Residential Time of Use', type: 'tou', peakRate: 38.5, offPeakRate: 18.5, shoulderRate: 25, supplyCharge: 98 },
+  { id: 'agl_residential_flat', retailer: 'AGL', plan: 'Residential Flat', type: 'flat', flatRate: 28.5, supplyCharge: 98 },
+  { id: 'origin_residential_tou', retailer: 'Origin Energy', plan: 'Solar Boost Plus', type: 'tou', peakRate: 42, offPeakRate: 16, shoulderRate: 26.5, supplyCharge: 102 },
+  { id: 'origin_residential_flat', retailer: 'Origin Energy', plan: 'Basic Home', type: 'flat', flatRate: 29, supplyCharge: 102 },
+  { id: 'energyaus_tou', retailer: 'Energy Australia', plan: 'Total Plan Flexible', type: 'tou', peakRate: 40, offPeakRate: 17, shoulderRate: 24, supplyCharge: 95 },
+  { id: 'energyaus_flat', retailer: 'Energy Australia', plan: 'Total Plan Home', type: 'flat', flatRate: 27.5, supplyCharge: 95 },
+  { id: 'simply_energy_flat', retailer: 'Simply Energy', plan: 'Simply Plus', type: 'flat', flatRate: 26, supplyCharge: 90 },
   { id: 'powershop_tou', retailer: 'Powershop', plan: 'Shopper Market', type: 'tou', peakRate: 36, offPeakRate: 15, shoulderRate: 23, supplyCharge: 88 },
 ];
 
@@ -46,44 +47,73 @@ export default function TariffSetupScreen() {
     offPeakRate: '',
     shoulderRate: '',
     supplyCharge: '100',
+    feedInRate: '',
+    effectiveFrom: '',
+    effectiveTo: '',
   });
+  const [ratesIncludeGst, setRatesIncludeGst] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   const handleSelectPreset = (preset: TariffPreset) => {
     setSelectedPreset(preset.id);
     setCustomMode(false);
+    setSaved(false);
+    setSaveError(null);
   };
 
   const handleSave = async () => {
     setIsLoading(true);
+    setSaveError(null);
 
     try {
       if (selectedPreset) {
         // Apply preset
         await api.post(`/tariffs/from-preset/${selectedPreset}`);
       } else if (customMode) {
-        // Create custom tariff
-        const data: any = {
+        const parseRequiredRate = (input: string, label: string) => {
+          const value = Number(input);
+          if (!input.trim() || !Number.isFinite(value) || value < 0) {
+            throw new Error(`${label} must be a non-negative number`);
+          }
+          return value;
+        };
+        const data: Record<string, string | number | boolean | null> = {
           tariff_type: tariffType,
-          daily_supply_charge_cents: parseFloat(customRates.supplyCharge) || 100,
+          daily_supply_charge_cents: parseRequiredRate(customRates.supplyCharge, 'Supply charge'),
+          feed_in_rate_cents_kwh: customRates.feedInRate.trim()
+            ? parseRequiredRate(customRates.feedInRate, 'Feed-in rate')
+            : null,
+          effective_from: customRates.effectiveFrom.trim() || null,
+          effective_to: customRates.effectiveTo.trim() || null,
+          rates_include_gst: ratesIncludeGst,
         };
 
         if (tariffType === 'flat') {
-          data.flat_rate_cents_kwh = parseFloat(customRates.flatRate) || 25;
+          data.flat_rate_cents_kwh = parseRequiredRate(customRates.flatRate, 'Flat rate');
         } else {
-          data.peak_rate_cents_kwh = parseFloat(customRates.peakRate) || 38;
-          data.off_peak_rate_cents_kwh = parseFloat(customRates.offPeakRate) || 18;
-          data.shoulder_rate_cents_kwh = parseFloat(customRates.shoulderRate) || 25;
+          data.peak_rate_cents_kwh = parseRequiredRate(customRates.peakRate, 'Peak rate');
+          data.off_peak_rate_cents_kwh = parseRequiredRate(customRates.offPeakRate, 'Off-peak rate');
+          data.shoulder_rate_cents_kwh = parseRequiredRate(customRates.shoulderRate, 'Shoulder rate');
         }
 
         await api.post('/tariffs', data);
       }
 
-      Alert.alert('Success', 'Your tariff has been saved', [
-        { text: 'OK', onPress: () => router.back() },
-      ]);
-    } catch (error: any) {
-      Alert.alert('Error', error.response?.data?.detail || 'Failed to save tariff');
+      if (Platform.OS === 'web') {
+        setSaved(true);
+      } else {
+        Alert.alert('Success', 'Your tariff has been saved', [
+          { text: 'OK', onPress: () => router.back() },
+        ]);
+      }
+    } catch (error: unknown) {
+      const message = getErrorMessage(error);
+      setSaveError(message);
+      if (Platform.OS !== 'web') {
+        Alert.alert('Error', message);
+      }
     }
 
     setIsLoading(false);
@@ -144,7 +174,7 @@ export default function TariffSetupScreen() {
         </TouchableOpacity>
         <Text style={styles.title}>Set Your Tariff</Text>
         <Text style={styles.subtitle}>
-          This helps us calculate accurate cost savings for your recommendations.
+          Tariff details help estimate energy charges. Estimates are not retailer-issued bills.
         </Text>
       </View>
 
@@ -158,6 +188,22 @@ export default function TariffSetupScreen() {
 
       {/* Presets */}
       <Text style={styles.sectionTitle}>Select your plan</Text>
+      <Text style={styles.presetDisclaimer}>
+        Preset rates are illustrative examples. Check your current bill for your actual rates and time windows.
+      </Text>
+      {saved && (
+        <View style={styles.successBanner}>
+          <Text style={styles.successText}>Your tariff has been saved.</Text>
+          <TouchableOpacity onPress={() => router.back()}>
+            <Text style={styles.successAction}>Done</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+      {saveError && (
+        <View style={styles.errorBanner}>
+          <Text style={styles.errorText}>{saveError}</Text>
+        </View>
+      )}
       {PRESETS.map(renderPreset)}
 
       {/* Custom option */}
@@ -166,6 +212,8 @@ export default function TariffSetupScreen() {
         onPress={() => {
           setCustomMode(true);
           setSelectedPreset(null);
+          setSaved(false);
+          setSaveError(null);
         }}
       >
         <Ionicons
@@ -262,6 +310,52 @@ export default function TariffSetupScreen() {
               placeholderTextColor={Colors.gray400}
             />
           </View>
+          <View style={styles.inputRow}>
+            <Text style={styles.inputLabel}>Feed-in rate (c/kWh, optional)</Text>
+            <TextInput
+              style={styles.input}
+              value={customRates.feedInRate}
+              onChangeText={(t) => setCustomRates({ ...customRates, feedInRate: t })}
+              keyboardType="decimal-pad"
+              placeholder="0"
+              placeholderTextColor={Colors.gray400}
+            />
+          </View>
+          <View style={styles.inputRow}>
+            <Text style={styles.inputLabel}>Effective from (YYYY-MM-DD, optional)</Text>
+            <TextInput
+              style={styles.input}
+              value={customRates.effectiveFrom}
+              onChangeText={(t) => setCustomRates({ ...customRates, effectiveFrom: t })}
+              placeholder="2026-07-01"
+              placeholderTextColor={Colors.gray400}
+              autoCapitalize="none"
+            />
+          </View>
+          <View style={styles.inputRow}>
+            <Text style={styles.inputLabel}>Effective to (YYYY-MM-DD, optional)</Text>
+            <TextInput
+              style={styles.input}
+              value={customRates.effectiveTo}
+              onChangeText={(t) => setCustomRates({ ...customRates, effectiveTo: t })}
+              placeholder="Leave blank for no end date"
+              placeholderTextColor={Colors.gray400}
+              autoCapitalize="none"
+            />
+          </View>
+          <TouchableOpacity
+            style={styles.gstToggle}
+            onPress={() => setRatesIncludeGst(!ratesIncludeGst)}
+            accessibilityRole="checkbox"
+            accessibilityState={{ checked: ratesIncludeGst }}
+          >
+            <Ionicons
+              name={ratesIncludeGst ? 'checkbox' : 'square-outline'}
+              size={22}
+              color={ratesIncludeGst ? Colors.primary : Colors.textSecondary}
+            />
+            <Text style={styles.gstToggleText}>Entered rates already include GST</Text>
+          </TouchableOpacity>
         </View>
       )}
 
@@ -323,6 +417,34 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.lg,
     gap: Spacing.sm,
   },
+  successBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: Colors.success + '15',
+    borderRadius: BorderRadius.md,
+    padding: Spacing.md,
+    marginBottom: Spacing.md,
+  },
+  successText: {
+    color: Colors.text,
+    fontSize: FontSize.sm,
+  },
+  successAction: {
+    color: Colors.primary,
+    fontSize: FontSize.sm,
+    fontWeight: FontWeight.semibold,
+  },
+  errorBanner: {
+    backgroundColor: Colors.error + '10',
+    borderRadius: BorderRadius.md,
+    padding: Spacing.md,
+    marginBottom: Spacing.md,
+  },
+  errorText: {
+    color: Colors.error,
+    fontSize: FontSize.sm,
+  },
   infoText: {
     flex: 1,
     fontSize: FontSize.sm,
@@ -334,6 +456,11 @@ const styles = StyleSheet.create({
     color: Colors.textSecondary,
     textTransform: 'uppercase',
     letterSpacing: 0.5,
+    marginBottom: Spacing.md,
+  },
+  presetDisclaimer: {
+    color: Colors.warning,
+    fontSize: FontSize.sm,
     marginBottom: Spacing.md,
   },
   presetCard: {
@@ -472,6 +599,17 @@ const styles = StyleSheet.create({
     color: Colors.text,
     borderWidth: 1,
     borderColor: Colors.border,
+  },
+  gstToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+    paddingVertical: Spacing.sm,
+  },
+  gstToggleText: {
+    flex: 1,
+    color: Colors.text,
+    fontSize: FontSize.sm,
   },
   saveButton: {
     backgroundColor: Colors.primary,

@@ -1,8 +1,9 @@
 """Health check and operational endpoints."""
 
+import logging
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from rq import Queue
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -11,6 +12,7 @@ from app.api.deps import get_current_user
 from app.database import get_db
 
 router = APIRouter(prefix="/health", tags=["health"])
+logger = logging.getLogger(__name__)
 
 
 @router.get("/live")
@@ -31,12 +33,17 @@ def readiness(db: Session = Depends(get_db)) -> dict:
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
     except Exception as exc:
-        return {
-            "status": "not_ready",
-            "database": "disconnected",
-            "error": str(exc),
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        }
+        logger.error(
+            "Readiness check failed",
+            extra={"dependency": "database", "error_type": type(exc).__name__},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "status": "not_ready",
+                "database": "disconnected",
+            },
+        ) from exc
 
 
 @router.get("/worker")
@@ -60,8 +67,11 @@ def worker_health(current_user: dict = Depends(get_current_user)) -> dict:
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
     except Exception as exc:
-        return {
-            "status": "error",
-            "error": str(exc),
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        }
+        logger.error(
+            "Worker health check failed",
+            extra={"dependency": "redis", "error_type": type(exc).__name__},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"status": "unavailable", "worker": "unreachable"},
+        ) from exc

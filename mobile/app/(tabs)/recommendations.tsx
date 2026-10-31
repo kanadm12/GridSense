@@ -28,7 +28,7 @@ const categoryIcons: Record<string, keyof typeof Ionicons.glyphMap> = {
 
 export default function RecommendationsScreen() {
   const { selectedMeter } = useMetersStore();
-  const { recommendations, totalSavings, fetchRecommendations, isLoading } =
+  const { recommendations, fetchRecommendations, isLoading } =
     useRecommendationsStore();
 
   useEffect(() => {
@@ -65,22 +65,43 @@ export default function RecommendationsScreen() {
 
       <Text style={styles.description}>{rec.description}</Text>
 
-      <View style={styles.actionContainer}>
-        <Ionicons name="checkmark-circle-outline" size={18} color={Colors.primary} />
-        <Text style={styles.actionText}>{rec.action}</Text>
+      <View style={styles.evidenceContainer}>
+        <Text style={styles.detailLabel}>Observed</Text>
+        <Text style={styles.detailText}>{rec.observed_fact}</Text>
+        <Text style={styles.detailLabel}>Baseline</Text>
+        <Text style={styles.detailText}>{rec.baseline}</Text>
       </View>
 
-      {(rec.potential_savings_kwh || rec.potential_savings_dollars) && (
-        <View style={styles.savingsContainer}>
-          <Ionicons name="trending-down" size={18} color={Colors.success} />
-          <Text style={styles.savingsText}>
-            Potential savings:{' '}
-            {rec.potential_savings_dollars
-              ? `$${rec.potential_savings_dollars.toFixed(2)}/month`
-              : `${rec.potential_savings_kwh?.toFixed(1)} kWh`}
-          </Text>
+      <View style={styles.actionContainer}>
+        <Ionicons name="checkmark-circle-outline" size={18} color={Colors.primary} />
+        <View style={styles.actionTextContainer}>
+          <Text style={styles.detailLabel}>Potential action</Text>
+          <Text style={styles.actionText}>{rec.proposed_action}</Text>
         </View>
-      )}
+      </View>
+
+      <View style={styles.opportunityContainer}>
+        <Text style={styles.detailLabel}>Conditional opportunity · not quantified</Text>
+        <Text style={styles.detailText}>{rec.conditional_opportunity}</Text>
+        <Text style={styles.detailLabel}>Applicable intervals</Text>
+        <Text style={styles.detailText}>{rec.applicable_intervals}</Text>
+        {rec.rate_difference_cents_kwh !== null && (
+          <Text style={styles.detailText}>
+            Configured rate spread: {rec.rate_difference_cents_kwh.toFixed(2)} c/kWh.
+            This is not a savings estimate.
+          </Text>
+        )}
+        <Text style={styles.detailLabel}>Assumptions</Text>
+        {rec.assumptions.map((assumption, index) => (
+          <Text key={index} style={styles.detailText}>• {assumption}</Text>
+        ))}
+        <Text style={styles.detailLabel}>Uncertainty · {rec.confidence} confidence</Text>
+        <Text style={styles.detailText}>{rec.uncertainty}</Text>
+        <Text style={styles.detailLabel}>Needed to quantify</Text>
+        {rec.data_requirements.map((requirement, index) => (
+          <Text key={index} style={styles.detailText}>• {requirement}</Text>
+        ))}
+      </View>
 
       <View style={styles.reasonContainer}>
         <Text style={styles.reasonLabel}>Why this matters:</Text>
@@ -106,21 +127,6 @@ export default function RecommendationsScreen() {
         <RefreshControl refreshing={isLoading} onRefresh={refresh} />
       }
     >
-      {/* Savings Summary */}
-      {totalSavings && totalSavings > 0 && (
-        <View style={styles.savingsSummary}>
-          <View style={styles.savingsSummaryIcon}>
-            <Ionicons name="wallet" size={32} color={Colors.success} />
-          </View>
-          <View>
-            <Text style={styles.savingsSummaryLabel}>Potential Monthly Savings</Text>
-            <Text style={styles.savingsSummaryValue}>
-              ${totalSavings.toFixed(2)}
-            </Text>
-          </View>
-        </View>
-      )}
-
       {/* Header */}
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Energy Tips</Text>
@@ -148,8 +154,10 @@ export default function RecommendationsScreen() {
         <View style={styles.infoContent}>
           <Text style={styles.infoTitle}>How recommendations work</Text>
           <Text style={styles.infoText}>
-            We analyze your usage patterns and compare them with optimal energy usage profiles.
-            Recommendations are based on Victorian Time-of-Use tariffs and typical household patterns.
+            Recommendations describe patterns in imported interval data; they do not identify
+            appliances or prove that energy can be shifted or saved. Dollar estimates require
+            a verified current tariff and a declared appliance, its rated power or energy demand,
+            and a feasible operating window. GridSense bill comparisons are estimates, not retailer bills.
           </Text>
         </View>
       </View>
@@ -165,34 +173,6 @@ const styles = StyleSheet.create({
   content: {
     padding: Spacing.md,
     paddingBottom: Spacing.xxl,
-  },
-  savingsSummary: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: Colors.success + '10',
-    borderRadius: BorderRadius.lg,
-    padding: Spacing.md,
-    marginBottom: Spacing.md,
-    borderWidth: 1,
-    borderColor: Colors.success + '30',
-    gap: Spacing.md,
-  },
-  savingsSummaryIcon: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: Colors.success + '20',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  savingsSummaryLabel: {
-    fontSize: FontSize.sm,
-    color: Colors.success,
-  },
-  savingsSummaryValue: {
-    fontSize: FontSize.xxl,
-    fontWeight: FontWeight.bold,
-    color: Colors.success,
   },
   header: {
     marginBottom: Spacing.md,
@@ -266,16 +246,32 @@ const styles = StyleSheet.create({
     color: Colors.primaryDark,
     fontWeight: FontWeight.medium,
   },
-  savingsContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.xs,
-    marginBottom: Spacing.sm,
+  actionTextContainer: {
+    flex: 1,
   },
-  savingsText: {
+  evidenceContainer: {
+    padding: Spacing.sm,
+    marginBottom: Spacing.sm,
+    borderRadius: BorderRadius.md,
+    backgroundColor: Colors.background,
+  },
+  opportunityContainer: {
+    padding: Spacing.sm,
+    marginBottom: Spacing.sm,
+    borderRadius: BorderRadius.md,
+    backgroundColor: Colors.info + '08',
+  },
+  detailLabel: {
+    fontSize: FontSize.xs,
+    fontWeight: FontWeight.semibold,
+    color: Colors.textSecondary,
+    marginTop: Spacing.xs,
+    marginBottom: 2,
+  },
+  detailText: {
     fontSize: FontSize.sm,
-    color: Colors.success,
-    fontWeight: FontWeight.medium,
+    color: Colors.textSecondary,
+    lineHeight: 19,
   },
   reasonContainer: {
     borderTopWidth: 1,

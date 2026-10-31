@@ -1,6 +1,8 @@
 """Tariff model for user electricity rates."""
 
-from sqlalchemy import Float, ForeignKey, Integer, String
+from datetime import date
+
+from sqlalchemy import JSON, Boolean, Date, Float, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, TimestampMixin
@@ -27,6 +29,17 @@ class Tariff(Base, TimestampMixin):
     peak_rate_cents_kwh: Mapped[float | None] = mapped_column(Float, nullable=True)
     off_peak_rate_cents_kwh: Mapped[float | None] = mapped_column(Float, nullable=True)
     shoulder_rate_cents_kwh: Mapped[float | None] = mapped_column(Float, nullable=True)
+    feed_in_rate_cents_kwh: Mapped[float | None] = mapped_column(Float, nullable=True)
+    periods: Mapped[list[dict] | None] = mapped_column(JSON, nullable=True)
+
+    effective_from: Mapped[date | None] = mapped_column(Date, nullable=True)
+    effective_to: Mapped[date | None] = mapped_column(Date, nullable=True)
+    rates_include_gst: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default="1", nullable=False
+    )
+    is_preset: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="0", nullable=False
+    )
 
     # Demand charge ($/kW)
     demand_charge_dollars_kw: Mapped[float | None] = mapped_column(Float, nullable=True)
