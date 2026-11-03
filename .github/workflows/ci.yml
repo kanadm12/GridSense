@@ -100,19 +100,64 @@ jobs:
         run: |
           python -m pip install --require-hashes -r requirements-dev.lock
 
+      - name: Provision restricted PostgreSQL integration database
+        id: pg-provision
+        env:
+          # Service-container administrator: used only by the provisioning and teardown
+          # steps. The pytest step does not receive these variables.
+          PGHOST: localhost
+          PGPORT: "5432"
+          PGUSER: postgres
+          PGPASSWORD: postgres
+        run: python scripts/ci_postgres_integration.py provision --env-file "$GITHUB_ENV"
+
       - name: Run tests
         env:
-          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/gridsense_test
           REDIS_URL: redis://localhost:6379/0
           SECRET_KEY: test-secret-key-for-ci-only
           DEBUG: true
         run: |
           set -o pipefail
-          pytest -v --cov=app --cov-report=xml --cov-report=term 2>&1 | tee "$RUNNER_TEMP/backend-pytest.log"
+          # DATABASE_URL stays unset (SQLite default), as in the verified local run. The
+          # integration fixtures use the restricted GRIDSENSE_INTEGRATION_* variables that
+          # the provisioning step wrote to the job environment.
+          pytest tests/integration --collect-only -q -p no:cacheprovider \
+            | tee "$RUNNER_TEMP/integration-collected.txt"
+          pytest -v -rs --cov=app --cov-report=xml --cov-report=term \
+            --junitxml="$RUNNER_TEMP/pytest-junit.xml" \
+            2>&1 | tee "$RUNNER_TEMP/backend-pytest.log"
           if grep -Eiq "Windows fatal exception|access violation|Fatal Python error" "$RUNNER_TEMP/backend-pytest.log"; then
             echo "Native runtime diagnostic found in pytest output" >&2
             exit 1
           fi
+
+      - name: Verify integration tests ran without skips
+        run: >-
+          python scripts/verify_pytest_report.py
+          --junit "$RUNNER_TEMP/pytest-junit.xml"
+          --collected "$RUNNER_TEMP/integration-collected.txt"
+          --integration-dir tests/integration
+
+      - name: Verify disposable schemas were cleaned up
+        if: always() && steps.pg-provision.outcome == 'success'
+        env:
+          PGHOST: localhost
+          PGPORT: "5432"
+          PGUSER: postgres
+          PGPASSWORD: postgres
+        run: python scripts/ci_postgres_integration.py verify-teardown
+
+      - name: Preserve backend test evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: backend-test-evidence
+          path: |
+            ${{ runner.temp }}/pytest-junit.xml
+            ${{ runner.temp }}/integration-collected.txt
+            ${{ runner.temp }}/backend-pytest.log
+          if-no-files-found: warn
+          retention-days: 14
 
       - name: Upload coverage
         uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4
