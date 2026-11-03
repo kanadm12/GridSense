@@ -1,0 +1,32 @@
+# Build context is ./backend (see docker-compose.yml and .github/workflows/ci.yml).
+# Keep secrets, developer databases, diagnostics and generated output out of the image.
+
+# Secrets and local configuration
+.env
+.env.*
+
+# Developer and test databases, legacy artifacts, coverage data
+**/*.db
+**/*.db-journal
+**/*.sqlite
+**/*.sqlite3
+file*
+.coverage
+coverage.xml
+
+# Generated output, diagnostics and agent/tool workspaces
+reports
+graphify-out
+**/graphify-out
+.claude
+
+# Caches and local environments
+**/__pycache__
+**/*.pyc
+.pytest_cache
+.ruff_cache
+.mypy_cache
+.venv*
+venv
+
+.git
