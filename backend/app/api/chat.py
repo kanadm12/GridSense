@@ -7,11 +7,10 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
-from app.rate_limit import limiter
 from app.api.ownership import verify_meter_ownership
 from app.database import get_db
-from app.models.meter import Meter
 from app.models.user import User
+from app.rate_limit import limiter
 from app.schemas.chat import ChatRequest, ChatResponse, ChatWelcome, QuickAction
 from app.services.ai_assistant import get_ai_assistant
 from app.services.chat_service import ChatService
@@ -34,7 +33,10 @@ async def get_welcome(
         greeting = "Good evening"
 
     return ChatWelcome(
-        greeting=f"{greeting}, {current_user.email.split('@')[0]}! I'm your energy assistant. How can I help you today?",
+        greeting=(
+            f"{greeting}, {current_user.email.split('@')[0]}! "
+            "I'm your energy assistant. How can I help you today?"
+        ),
         quick_actions=[
             QuickAction(
                 label="Check my usage",
@@ -101,8 +103,7 @@ async def send_message(
     history = None
     if payload.conversation_history:
         history = [
-            {"role": msg.role.value, "content": msg.content}
-            for msg in payload.conversation_history
+            {"role": msg.role.value, "content": msg.content} for msg in payload.conversation_history
         ]
     elif session:
         history = [
@@ -123,13 +124,20 @@ async def send_message(
         # Check if response references user data
         data_referenced = any(
             phrase in response_text.lower()
-            for phrase in ["your usage", "you used", "your bill", "your data", "last week", "yesterday"]
+            for phrase in [
+                "your usage",
+                "you used",
+                "your bill",
+                "your data",
+                "last week",
+                "yesterday",
+            ]
         )
 
         # Generate follow-up suggestions based on the response
         suggestions = []
         response_lower = response_text.lower()
-        
+
         if "peak" in response_lower or "off-peak" in response_lower:
             suggestions.append("What appliances use the most energy?")
         if "solar" in response_lower:
@@ -150,10 +158,7 @@ async def send_message(
 
     except Exception as e:
         db.rollback()
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to process message: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=f"Failed to process message: {str(e)}")
 
 
 @router.get("/history")

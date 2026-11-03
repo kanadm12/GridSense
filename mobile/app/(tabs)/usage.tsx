@@ -19,14 +19,14 @@ type ChartType = 'daily' | 'hourly' | 'weekly';
 
 export default function UsageScreen() {
   const { selectedMeter } = useMetersStore();
-  const { dailyUsage, hourlyUsage, fetchAllUsageData, isLoading } = useUsageStore();
+  const { summary, dailyUsage, hourlyUsage, fetchAllUsageData, isLoading } = useUsageStore();
   const [chartType, setChartType] = useState<ChartType>('daily');
 
   useEffect(() => {
     if (selectedMeter) {
       fetchAllUsageData(selectedMeter.id);
     }
-  }, [selectedMeter]);
+  }, [selectedMeter, fetchAllUsageData]);
 
   const refresh = () => {
     if (selectedMeter) {
@@ -37,12 +37,13 @@ export default function UsageScreen() {
   // Prepare chart data
   const getDailyChartData = () => {
     return dailyUsage
+      .filter((day) => day.eligible_interval_count > 0)
       .slice(0, 14) // Last 14 days
       .reverse()
       .map((day) => ({
-        value: day.total_kwh,
+        value: day.observed_eligible_kwh,
         label: new Date(day.date).getDate().toString(),
-        frontColor: Colors.primary,
+        frontColor: day.coverage_status === 'complete' ? Colors.primary : Colors.warning,
       }));
   };
 
@@ -61,7 +62,7 @@ export default function UsageScreen() {
 
   const chartData = chartType === 'daily' ? getDailyChartData() : getHourlyChartData();
   const chartWidth = screenWidth - Spacing.md * 4;
-  const barWidth = Math.max(12, chartWidth / chartData.length - 8);
+  const barWidth = Math.max(12, chartWidth / Math.max(1, chartData.length) - 8);
 
   if (!selectedMeter) {
     return (
@@ -102,15 +103,38 @@ export default function UsageScreen() {
 
       {chartType === 'daily' && (
         <Text style={styles.costNotice}>
-          Daily cost estimates are unavailable. Use the dashboard bill comparison for
-          tariff-backed estimates.
+          Daily bars show observed eligible imported energy. Partial days are not complete
+          consumption totals; missing intervals are not treated as zero.
         </Text>
+      )}
+
+      {summary && (
+        <View style={styles.qualityCard}>
+          <Text style={styles.qualityTitle}>
+            {summary.provenance_status === 'synthetic'
+              ? 'Illustrative synthetic data'
+              : summary.channel_classification_status !== 'classified'
+                ? 'Meter channel not classified'
+                : `${Math.round(summary.coverage_fraction * 100)}% eligible interval coverage`}
+          </Text>
+          <Text style={styles.qualityMessage}>
+            {summary.provenance_status === 'synthetic'
+              ? 'These readings are synthetic demonstration data, not measured household observations.'
+              : summary.explanation ||
+                `${summary.eligible_interval_count} of ${summary.expected_interval_count} expected intervals are eligible; ${summary.missing_interval_count} are missing.`}
+          </Text>
+          {summary.observed_interval_peak_demand_kw !== null && (
+            <Text style={styles.qualityMessage}>
+              Observed interval-average peak demand: {summary.observed_interval_peak_demand_kw.toFixed(2)} kW.
+            </Text>
+          )}
+        </View>
       )}
 
       {/* Chart Card */}
       <View style={styles.chartCard}>
         <Text style={styles.chartTitle}>
-          {chartType === 'daily' ? 'Daily Usage (kWh)' : 'Hourly Pattern (Avg kWh)'}
+          {chartType === 'daily' ? 'Observed eligible energy (kWh)' : 'Hourly eligible average (kWh)'}
         </Text>
 
         {chartData.length > 0 ? (
@@ -130,7 +154,7 @@ export default function UsageScreen() {
               yAxisTextStyle={{ color: Colors.textSecondary, fontSize: 10 }}
               xAxisLabelTextStyle={{ color: Colors.textSecondary, fontSize: 10 }}
               noOfSections={4}
-              maxValue={Math.max(...chartData.map((d) => d.value)) * 1.2}
+              maxValue={Math.max(...chartData.map((d) => d.value), 0.1) * 1.2}
             />
           </View>
         ) : (
@@ -174,9 +198,16 @@ export default function UsageScreen() {
                 <Text style={styles.dayBreakdown}>
                   Peak: {day.peak_kwh.toFixed(1)} | Off-Peak: {day.off_peak_kwh.toFixed(1)}
                 </Text>
+                <Text style={styles.dayBreakdown}>
+                  {Math.round(day.coverage_fraction * 100)}% coverage · {day.missing_interval_count} missing · {day.coverage_status}
+                </Text>
               </View>
               <View style={styles.dayStats}>
-                <Text style={styles.dayValue}>{day.total_kwh.toFixed(1)} kWh</Text>
+                <Text style={styles.dayValue}>
+                  {day.eligible_interval_count === 0
+                    ? 'Unavailable'
+                    : `${day.observed_eligible_kwh.toFixed(1)} kWh observed`}
+                </Text>
                 {day.estimated_cost !== null && (
                   <Text style={styles.dayCost}>${day.estimated_cost.toFixed(2)}</Text>
                 )}
@@ -262,6 +293,24 @@ const styles = StyleSheet.create({
     color: Colors.textSecondary,
     fontSize: FontSize.sm,
     marginBottom: Spacing.md,
+  },
+  qualityCard: {
+    backgroundColor: Colors.warning + '12',
+    borderRadius: BorderRadius.md,
+    borderWidth: 1,
+    borderColor: Colors.warning + '40',
+    padding: Spacing.md,
+    marginBottom: Spacing.md,
+  },
+  qualityTitle: {
+    color: Colors.text,
+    fontSize: FontSize.sm,
+    fontWeight: FontWeight.semibold,
+  },
+  qualityMessage: {
+    color: Colors.textSecondary,
+    fontSize: FontSize.xs,
+    marginTop: Spacing.xs,
   },
   chartTitle: {
     fontSize: FontSize.md,

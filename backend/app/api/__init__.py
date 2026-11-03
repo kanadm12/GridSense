@@ -4,6 +4,7 @@ from app.api.auth import router as auth_router
 from app.api.automation import router as automation_router
 from app.api.billing import router as billing_router
 from app.api.chat import router as chat_router
+from app.api.context import router as context_router
 from app.api.insights import router as insights_router
 from app.api.meters import router as meters_router
 from app.api.notifications import router as notifications_router
@@ -19,6 +20,7 @@ __all__ = [
     "automation_router",
     "billing_router",
     "chat_router",
+    "context_router",
     "insights_router",
     "meters_router",
     "notifications_router",

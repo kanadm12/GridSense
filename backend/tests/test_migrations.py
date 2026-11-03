@@ -29,9 +29,33 @@ def test_clean_database_migrates_to_head(tmp_path, monkeypatch):
             revision = connection.execute(
                 text("SELECT version_num FROM alembic_version")
             ).scalar_one()
-        assert revision == "f6a7b8c9d0e1"
+        assert revision == "d1e2f3a4b5c6"
+        meter_columns = {column["name"] for column in inspector.get_columns("meters")}
+        assert "mdm_data_stream_identifier" in meter_columns
+        reading_columns = {column["name"] for column in inspector.get_columns("readings")}
+        assert {
+            "source_value",
+            "source_unit",
+            "provenance_kind",
+            "source_time_basis",
+            "source_interval_date",
+            "source_interval_number",
+            "source_nmi_configuration",
+            "source_record_quality_method",
+        } <= reading_columns
         assert "uq_nem12_upload_user_file_hash" in {
             index["name"] for index in inspector.get_indexes("nem12_uploads")
+        }
+        assert "tariff_revisions" in inspector.get_table_names()
+        assert "archived_at" in {
+            column["name"] for column in inspector.get_columns("tariffs")
+        }
+        assert {"external_fetch_runs", "weather_forecast_values"} <= set(
+            inspector.get_table_names()
+        )
+        assert "uq_weather_forecast_run_target" in {
+            constraint["name"]
+            for constraint in inspector.get_unique_constraints("weather_forecast_values")
         }
 
         command.downgrade(config, "e6f168c90ff8")
@@ -50,9 +74,30 @@ def test_clean_database_migrates_to_head(tmp_path, monkeypatch):
         assert "interval_minutes" not in {
             column["name"] for column in inspect(engine).get_columns("readings")
         }
+        assert not {
+            "source_value",
+            "source_unit",
+            "provenance_kind",
+            "source_time_basis",
+            "source_interval_date",
+            "source_interval_number",
+            "source_nmi_configuration",
+            "source_record_quality_method",
+        } & {column["name"] for column in inspect(engine).get_columns("readings")}
+        assert "mdm_data_stream_identifier" not in {
+            column["name"] for column in inspect(engine).get_columns("meters")
+        }
         assert "feed_in_rate_cents_kwh" not in {
             column["name"] for column in inspect(engine).get_columns("tariffs")
         }
+        assert "tariff_revisions" not in inspect(engine).get_table_names()
+        assert "archived_at" not in {
+            column["name"] for column in inspect(engine).get_columns("tariffs")
+        }
+        assert not {
+            "external_fetch_runs",
+            "weather_forecast_values",
+        } & set(inspect(engine).get_table_names())
 
         with Session(engine) as db:
             user = User(
@@ -89,6 +134,20 @@ def test_clean_database_migrates_to_head(tmp_path, monkeypatch):
         }
         assert "rates_include_gst" in {
             column["name"] for column in inspect(engine).get_columns("tariffs")
+        }
+        assert "tariff_revisions" in inspect(engine).get_table_names()
+        assert {
+            "source_value",
+            "source_unit",
+            "provenance_kind",
+            "source_time_basis",
+            "source_interval_date",
+            "source_interval_number",
+            "source_nmi_configuration",
+            "source_record_quality_method",
+        } <= {column["name"] for column in inspect(engine).get_columns("readings")}
+        assert "mdm_data_stream_identifier" in {
+            column["name"] for column in inspect(engine).get_columns("meters")
         }
         with Session(engine) as db:
             uploads = (

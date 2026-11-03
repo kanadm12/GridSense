@@ -1,0 +1,423 @@
+{
+  "source": "AER Energy Retailer Base URIs and CDR Brands",
+  "document_version": "January 2026",
+  "source_url": "https://www.aer.gov.au/documents/consumer-data-right-energy-retailer-base-uris-and-cdr-brands",
+  "source_last_updated": "2026-01-15",
+  "retailers": [
+    {
+      "retailer": "1st Energy",
+      "base_uri": "https://cdr.energymadeeasy.gov.au/1st-energy/",
+      "brand": "1st-energy"
+    },
+    {
+      "retailer": "ActewAGL",
+      "base_uri": "https://cdr.energymadeeasy.gov.au/actewagl/",
+      "brand": "actewagl"
+    },
+    {
+      "retailer": "Active Utilities Retail",
+      "base_uri": "https://cdr.energymadeeasy.gov.au/active-utilities/",
+      "brand": "active-utilities"
+    },
+    {
+      "retailer": "AGL",
+      "base_uri": "https://cdr.energymadeeasy.gov.au/agl/",
+      "brand": "agl"
+    },
+    {
+      "retailer": "Alinta Energy",
+      "base_uri": "https://cdr.energymadeeasy.gov.au/alinta/",
+      "brand": "alinta"
+    },
+    {
+      "retailer": "Altogether",
+      "base_uri": "https://cdr.energymadeeasy.gov.au/altogether/",
+      "brand": "altogether"
+    },
+    {
+      "retailer": "Amber Electric",
+      "base_uri": "https://cdr.energymadeeasy.gov.au/amber/",
+      "brand": "amber"
+    },
+    {
+      "retailer": "Ampol Energy",
+      "base_uri": "https://cdr.energymadeeasy.gov.au/ampol/",
+      "brand": "ampol"
+    },
+    {
+      "retailer": "Arc Energy Group",
+      "base_uri": "https://cdr.energymadeeasy.gov.au/arc-energy/",
+      "brand": "arc-energy"
+    },
+    {
+      "retailer": "ARCLINE by RACV",
+      "base_uri": "https://cdr.energymadeeasy.gov.au/energy-locals/",
+      "brand": "arcline"
+    },
+    {
+      "retailer": "Arcstream",
+      "base_uri": "https://cdr.energymadeeasy.gov.au/arcstream/",
+      "brand": "arcstream"
+    },
+    {
+      "retailer": "ASENO",
+      "base_uri": "https://cdr.energymadeeasy.gov.au/aseno/",
+      "brand": "aseno"
+    },
+    {
+      "retailer": "Aurora Energy",
+      "base_uri": "https://cdr.energymadeeasy.gov.au/aurora/",
+      "brand": "aurora"
+    },
+    {
+      "retailer": "Besy",
+      "base_uri": "https://cdr.energymadeeasy.gov.au/besy/",
+      "brand": "besy"
+    },
+    {
+      "retailer": "Blue NRG",
+      "base_uri": "https://cdr.energymadeeasy.gov.au/blue-nrg/",
+      "brand": "blue-nrg"
+    },
+    {
+      "retailer": "Brighte Energy",
+      "base_uri": "https://cdr.energymadeeasy.gov.au/brighte/",
+      "brand": "brighte"
+    },
+    {
+      "retailer": "CleanCo Queensland",
+      "base_uri": "https://cdr.energymadeeasy.gov.au/cleanco/",
+      "brand": "cleanco"
+    },
+    {
+      "retailer": "CleanPeak Energy Retail",
+      "base_uri": "https://cdr.energymadeeasy.gov.au/cleanpeak/",
+      "brand": "cleanpeak"
+    },
+    {
+      "retailer": "Coles Energy",
+      "base_uri": "https://cdr.energymadeeasy.gov.au/coles/",
+      "brand": "coles"
+    },
+    {
+      "retailer": "Commander Power & Gas",
+      "base_uri": "https://cdr.energymadeeasy.gov.au/commander/",
+      "brand": "commander"
+    },
+    {
+      "retailer": "Cooperative Power",
+      "base_uri": "https://cdr.energymadeeasy.gov.au/energy-locals/",
+      "brand": "cooperative"
+    },
+    {
+      "retailer": "CovaU",
+      "base_uri": "https://cdr.energymadeeasy.gov.au/covau/",
+      "brand": "covau"
+    },
+    {
+      "retailer": "CPE Mascot",
+      "base_uri": "https://cdr.energymadeeasy.gov.au/cpe-mascot/",
+      "brand": "cpe-mascot"
+    },
+    {
+      "retailer": "Diamond Energy",
+      "base_uri": "https://cdr.energymadeeasy.gov.au/diamond/",
+      "brand": "diamond"
+    },
+    {
+      "retailer": "Discover Energy",
+      "base_uri": "https://cdr.energymadeeasy.gov.au/discover/",
+      "brand": "discover"
+    },
+    {
+      "retailer": "Dodo Power & Gas",
+      "base_uri": "https://cdr.energymadeeasy.gov.au/dodo/",
+      "brand": "dodo"
+    },
+    {
+      "retailer": "Ellis Air Connect",
+      "base_uri": "https://cdr.energymadeeasy.gov.au/ea-connect/",
+      "brand": "ea-connect"
+    },
+    {
+      "retailer": "Energy Locals Retail",
+      "base_uri": "https://cdr.energymadeeasy.gov.au/energy-locals/",
+      "brand": "energy-locals"
+    },
+    {
+      "retailer": "Energy Locals Urban",
+      "base_uri": "https://cdr.energymadeeasy.gov.au/energy-locals-urban/",
+      "brand": "energy-locals-urban"
+    },
+    {
+      "retailer": "EnergyAustralia",
+      "base_uri": "https://cdr.energymadeeasy.gov.au/energyaustralia/",
+      "brand": "energyaustralia"
+    },
+    {
+      "retailer": "ENGIE",
+      "base_uri": "https://cdr.energymadeeasy.gov.au/engie/",
+      "brand": "engie"
+    },
+    {
+      "retailer": "ERC Energy",
+      "base_uri": "https://cdr.energymadeeasy.gov.au/erc-energy/",
+      "brand": "erc-energy"
+    },
+    {
+      "retailer": "Ergon Energy",
+      "base_uri": "https://cdr.energymadeeasy.gov.au/ergon/",
+      "brand": "ergon"
+    },
+    {
+      "retailer": "Evergy",
+      "base_uri": "https://cdr.energymadeeasy.gov.au/evergy/",
+      "brand": "evergy"
+    },
+    {
+      "retailer": "Flipped Energy",
+      "base_uri": "https://cdr.energymadeeasy.gov.au/flipped/",
+      "brand": "flipped"
+    },
+    {
+      "retailer": "Flow Power",
+      "base_uri": "https://cdr.energymadeeasy.gov.au/flow-power/",
+      "brand": "flow-power"
+    },
+    {
+      "retailer": "Future X Power",
+      "base_uri": "https://cdr.energymadeeasy.gov.au/future-x/",
+      "brand": "future-x"
+    },
+    {
+      "retailer": "Future X Power",
+      "base_uri": "https://cdr.energymadeeasy.gov.au/future-x/",
+      "brand": "sunswitch"
+    },
+    {
+      "retailer": "GEE Energy",
+      "base_uri": "https://cdr.energymadeeasy.gov.au/gee-energy/",
+      "brand": "gee-energy"
+    },
+    {
+      "retailer": "GloBird Energy",
+      "base_uri": "https://cdr.energymadeeasy.gov.au/globird/",
+      "brand": "globird"
+    },
+    {
+      "retailer": "Glow Power",
+      "base_uri": "https://cdr.energymadeeasy.gov.au/glow-power/",
+      "brand": "glow-power"
+    },
+    {
+      "retailer": "Humenergy Group",
+      "base_uri": "https://cdr.energymadeeasy.gov.au/humenergy/",
+      "brand": "humenergy"
+    },
+    {
+      "retailer": "iGENO",
+      "base_uri": "https://cdr.energymadeeasy.gov.au/igeno/",
+      "brand": "igeno"
+    },
+    {
+      "retailer": "iO Energy",
+      "base_uri": "https://cdr.energymadeeasy.gov.au/radian/",
+      "brand": "io-energy"
+    },
+    {
+      "retailer": "Kogan Energy",
+      "base_uri": "https://cdr.energymadeeasy.gov.au/kogan/",
+      "brand": "kogan"
+    },
+    {
+      "retailer": "Locality Planning Energy",
+      "base_uri": "https://cdr.energymadeeasy.gov.au/locality-planning/",
+      "brand": "locality-planning"
+    },
+    {
+      "retailer": "Localvolts",
+      "base_uri": "https://cdr.energymadeeasy.gov.au/localvolts/",
+      "brand": "localvolts"
+    },
+    {
+      "retailer": "Lumo Energy",
+      "base_uri": "https://cdr.energymadeeasy.gov.au/lumo/",
+      "brand": "lumo"
+    },
+    {
+      "retailer": "Macarthur Energy Retail",
+      "base_uri": "https://cdr.energymadeeasy.gov.au/macarthur/",
+      "brand": "macarthur"
+    },
+    {
+      "retailer": "Macquarie",
+      "base_uri": "https://cdr.energymadeeasy.gov.au/macquarie/",
+      "brand": "macquarie"
+    },
+    {
+      "retailer": "Metered Energy Holdings",
+      "base_uri": "https://cdr.energymadeeasy.gov.au/metered-energy/",
+      "brand": "metered-energy"
+    },
+    {
+      "retailer": "Microgrid Power",
+      "base_uri": "https://cdr.energymadeeasy.gov.au/microgrid/",
+      "brand": "microgrid"
+    },
+    {
+      "retailer": "Momentum Energy",
+      "base_uri": "https://cdr.energymadeeasy.gov.au/momentum/",
+      "brand": "momentum"
+    },
+    {
+      "retailer": "MYOB powered by OVO",
+      "base_uri": "https://cdr.energymadeeasy.gov.au/ovo-energy/",
+      "brand": "myob"
+    },
+    {
+      "retailer": "Nectr",
+      "base_uri": "https://cdr.energymadeeasy.gov.au/nectr/",
+      "brand": "nectr"
+    },
+    {
+      "retailer": "Next Business Energy",
+      "base_uri": "https://cdr.energymadeeasy.gov.au/next-business/",
+      "brand": "next-business"
+    },
+    {
+      "retailer": "Origin Energy",
+      "base_uri": "https://cdr.energymadeeasy.gov.au/origin/",
+      "brand": "origin"
+    },
+    {
+      "retailer": "OVO Energy",
+      "base_uri": "https://cdr.energymadeeasy.gov.au/ovo-energy/",
+      "brand": "ovo-energy"
+    },
+    {
+      "retailer": "OVO Energy for CTM",
+      "base_uri": "https://cdr.energymadeeasy.gov.au/ovo-energy/",
+      "brand": "ovo-energy-ctm"
+    },
+    {
+      "retailer": "Pacific Blue Retail",
+      "base_uri": "https://cdr.energymadeeasy.gov.au/pacific-blue/",
+      "brand": "pacific-blue"
+    },
+    {
+      "retailer": "Perpetual Energy",
+      "base_uri": "https://cdr.energymadeeasy.gov.au/perpetual/",
+      "brand": "perpetual"
+    },
+    {
+      "retailer": "PowerHub",
+      "base_uri": "https://cdr.energymadeeasy.gov.au/powerhub/",
+      "brand": "powerhub"
+    },
+    {
+      "retailer": "Powershop",
+      "base_uri": "https://cdr.energymadeeasy.gov.au/powershop/",
+      "brand": "powershop"
+    },
+    {
+      "retailer": "Powow Power",
+      "base_uri": "https://cdr.energymadeeasy.gov.au/powow/",
+      "brand": "powow"
+    },
+    {
+      "retailer": "RAA Energy",
+      "base_uri": "https://cdr.energymadeeasy.gov.au/energy-locals/",
+      "brand": "raa"
+    },
+    {
+      "retailer": "Radian Energy",
+      "base_uri": "https://cdr.energymadeeasy.gov.au/radian/",
+      "brand": "radian"
+    },
+    {
+      "retailer": "Real Utilities",
+      "base_uri": "https://cdr.energymadeeasy.gov.au/real-utilities/",
+      "brand": "real-utilities"
+    },
+    {
+      "retailer": "Red Energy",
+      "base_uri": "https://cdr.energymadeeasy.gov.au/red-energy/",
+      "brand": "red-energy"
+    },
+    {
+      "retailer": "Savant Energy",
+      "base_uri": "https://cdr.energymadeeasy.gov.au/savant/",
+      "brand": "savant"
+    },
+    {
+      "retailer": "Seene",
+      "base_uri": "https://cdr.energymadeeasy.gov.au/seene/",
+      "brand": "seene"
+    },
+    {
+      "retailer": "Shell Energy",
+      "base_uri": "https://cdr.energymadeeasy.gov.au/shell-energy/",
+      "brand": "shell-energy"
+    },
+    {
+      "retailer": "Silver Asset Energy",
+      "base_uri": "https://cdr.energymadeeasy.gov.au/silver-asset/",
+      "brand": "silver-asset"
+    },
+    {
+      "retailer": "Smart Energy",
+      "base_uri": "https://cdr.energymadeeasy.gov.au/smart-energy/",
+      "brand": "smart-energy"
+    },
+    {
+      "retailer": "Solstice Energy",
+      "base_uri": "https://cdr.energymadeeasy.gov.au/solstice/",
+      "brand": "solstice"
+    },
+    {
+      "retailer": "Stanwell Energy",
+      "base_uri": "https://cdr.energymadeeasy.gov.au/stanwell/",
+      "brand": "stanwell"
+    },
+    {
+      "retailer": "Sumo",
+      "base_uri": "https://cdr.energymadeeasy.gov.au/sumo-power/",
+      "brand": "sumo-power"
+    },
+    {
+      "retailer": "Tango Energy",
+      "base_uri": "https://cdr.energymadeeasy.gov.au/tango/",
+      "brand": "tango"
+    },
+    {
+      "retailer": "Telstra Energy",
+      "base_uri": "https://cdr.energymadeeasy.gov.au/telstra-energy/",
+      "brand": "telstra-energy"
+    },
+    {
+      "retailer": "Tesla Energy Ventures",
+      "base_uri": "https://cdr.energymadeeasy.gov.au/tesla/",
+      "brand": "tesla"
+    },
+    {
+      "retailer": "Veolia Energy",
+      "base_uri": "https://cdr.energymadeeasy.gov.au/veolia/",
+      "brand": "veolia"
+    },
+    {
+      "retailer": "WINconnect",
+      "base_uri": "https://cdr.energymadeeasy.gov.au/winconnect/",
+      "brand": "winconnect"
+    },
+    {
+      "retailer": "YES Energy",
+      "base_uri": "https://cdr.energymadeeasy.gov.au/yes-energy/",
+      "brand": "yes-energy"
+    },
+    {
+      "retailer": "ZEN Energy",
+      "base_uri": "https://cdr.energymadeeasy.gov.au/zen-energy/",
+      "brand": "zen-energy"
+    }
+  ]
+}

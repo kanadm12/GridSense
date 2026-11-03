@@ -23,13 +23,19 @@ class LoggingMiddleware(BaseHTTPMiddleware):
         if hasattr(request.state, "user"):
             user_id = getattr(request.state.user, "id", None)
 
+        query_params = dict(request.query_params) if request.query_params else None
+        if request.url.path.endswith(("/context/weather/summary", "/context/weather/hourly")):
+            if query_params is not None:
+                query_params.pop("latitude", None)
+                query_params.pop("longitude", None)
+
         # Log request
         log_api_request(
             logger,
             method=request.method,
             path=str(request.url.path),
             user_id=user_id,
-            query_params=dict(request.query_params) if request.query_params else None,
+            query_params=query_params,
         )
 
         # Process request

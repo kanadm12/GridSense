@@ -1,0 +1,14 @@
+title = "GridSense gitleaks configuration"
+
+[extend]
+useDefault = true
+
+# Synthetic JWT fixture material for the python-jose to PyJWT legacy-token
+# compatibility tests. The signing key is a labelled test value that is never
+# loaded by application configuration (backend/app/config.py).
+#
+# The ten reviewed findings are suppressed by exact fingerprint in
+# .gitleaksignore. No path-wide allowlist is used, so any new finding in these
+# files, or anywhere else, fails the scan. Gitleaks v8.24 honours fingerprints
+# only in directory mode (--no-git) with the /repo/ prefix shown in the
+# fingerprint; see PROMPT23E_SECURITY_REMEDIATION.md section 13.

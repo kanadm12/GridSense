@@ -4,21 +4,19 @@ from urllib.parse import parse_qs, urlparse
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.engine import Engine
+from sqlalchemy.orm import Session, sessionmaker
 
 from app.database import get_db
 from app.main import app
 from app.models import Base
 
-engine = create_engine(
-    "sqlite:///file:password_reset_tests?mode=memory&cache=shared",
-    connect_args={"check_same_thread": False, "uri": True},
-)
-TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+engine: Engine
+testing_session_local: sessionmaker[Session]
 
 
 def override_get_db():
-    db = TestingSessionLocal()
+    db = testing_session_local()
     try:
         yield db
     finally:
@@ -34,7 +32,11 @@ class CapturingEmailProvider:
         self.reset_url = reset_url
 
 
-def test_password_reset_uses_delivered_token_and_invalidates_it(monkeypatch):
+def test_password_reset_uses_delivered_token_and_invalidates_it(monkeypatch, tmp_path):
+    global engine, testing_session_local
+    engine = create_engine(f"sqlite:///{tmp_path / 'password_reset.sqlite3'}")
+    testing_session_local = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    previous_overrides = app.dependency_overrides.copy()
     Base.metadata.create_all(bind=engine)
     provider = CapturingEmailProvider()
     monkeypatch.setattr("app.api.password_reset.get_email_provider", lambda settings: provider)
@@ -75,4 +77,6 @@ def test_password_reset_uses_delivered_token_and_invalidates_it(monkeypatch):
             assert reused_token_response.status_code == 400
     finally:
         app.dependency_overrides.clear()
+        app.dependency_overrides.update(previous_overrides)
         Base.metadata.drop_all(bind=engine)
+        engine.dispose()

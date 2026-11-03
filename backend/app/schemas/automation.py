@@ -1,8 +1,9 @@
 """Schemas for home automation."""
 
 from datetime import datetime
-from pydantic import BaseModel, Field
 from typing import Any
+
+from pydantic import BaseModel, Field
 
 
 class SmartDeviceCreate(BaseModel):

@@ -2,7 +2,7 @@
  * Home Automation Screen
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -13,7 +13,9 @@ import {
   Alert,
   Switch,
   TextInput,
+  type TextInputInstance,
   Modal,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -57,6 +59,11 @@ interface GridSignal {
   recommendation: string;
 }
 
+type WebFocusableElement = {
+  blur?: () => void;
+  focus?: () => void;
+};
+
 const DEVICE_ICONS: Record<string, string> = {
   hvac: 'thermometer',
   water_heater: 'water',
@@ -89,6 +96,8 @@ export default function AutomationScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [showAddDevice, setShowAddDevice] = useState(false);
+  const addDeviceNameInputRef = useRef<TextInputInstance>(null);
+  const addDeviceTriggerRef = useRef<WebFocusableElement | null>(null);
   const [newDevice, setNewDevice] = useState({
     name: '',
     device_type: 'smart_plug',
@@ -119,13 +128,43 @@ export default function AutomationScreen() {
   }, []);
 
   useEffect(() => {
-    fetchData();
+    const frame = requestAnimationFrame(() => {
+      void fetchData();
+    });
+    return () => cancelAnimationFrame(frame);
   }, [fetchData]);
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
     fetchData();
   }, [fetchData]);
+
+  const openAddDeviceModal = () => {
+    if (Platform.OS === 'web') {
+      const runtimeDocument = (globalThis as {
+        document?: {
+          activeElement?: WebFocusableElement | null;
+          body?: WebFocusableElement | null;
+        };
+      }).document;
+      const trigger = runtimeDocument?.activeElement;
+      if (trigger && trigger !== runtimeDocument?.body) {
+        addDeviceTriggerRef.current = trigger;
+      }
+      trigger?.blur?.();
+    }
+    setShowAddDevice(true);
+  };
+
+  const closeAddDeviceModal = () => {
+    setShowAddDevice(false);
+  };
+
+  const restoreAddDeviceTriggerFocus = () => {
+    if (Platform.OS === 'web') {
+      requestAnimationFrame(() => addDeviceTriggerRef.current?.focus?.());
+    }
+  };
 
   const toggleDevice = async (device: SmartDevice, command: 'on' | 'off') => {
     try {
@@ -173,7 +212,7 @@ export default function AutomationScreen() {
           ? parseFloat(newDevice.power_rating_watts)
           : null,
       });
-      setShowAddDevice(false);
+      closeAddDeviceModal();
       setNewDevice({
         name: '',
         device_type: 'smart_plug',
@@ -253,7 +292,8 @@ export default function AutomationScreen() {
           <Text style={styles.title}>Home Automation</Text>
           <TouchableOpacity
             style={styles.addButton}
-            onPress={() => setShowAddDevice(true)}
+            accessibilityLabel="Add a smart device"
+            onPress={openAddDeviceModal}
           >
             <Ionicons name="add" size={24} color="#2563EB" />
           </TouchableOpacity>
@@ -410,17 +450,32 @@ export default function AutomationScreen() {
       </ScrollView>
 
       {/* Add Device Modal */}
-      <Modal visible={showAddDevice} animationType="slide" transparent>
+      <Modal
+        visible={showAddDevice}
+        animationType="slide"
+        transparent
+        onRequestClose={closeAddDeviceModal}
+        onShow={() => {
+          if (Platform.OS === 'web') {
+            addDeviceNameInputRef.current?.focus();
+          }
+        }}
+        onDismiss={restoreAddDeviceTriggerFocus}
+      >
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Add Smart Device</Text>
-              <TouchableOpacity onPress={() => setShowAddDevice(false)}>
+              <TouchableOpacity
+                accessibilityLabel="Close add device dialog"
+                onPress={closeAddDeviceModal}
+              >
                 <Ionicons name="close" size={24} color="#6B7280" />
               </TouchableOpacity>
             </View>
 
             <TextInput
+              ref={addDeviceNameInputRef}
               style={styles.input}
               placeholder="Device Name"
               value={newDevice.name}

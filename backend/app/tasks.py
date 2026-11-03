@@ -299,6 +299,8 @@ def import_nem12_task(
                     Meter.nmi == meter_data.nmi,
                     Meter.suffix == (meter_data.suffix or ""),
                     Meter.register_id == meter_data.register_id,
+                    Meter.mdm_data_stream_identifier
+                    == meter_data.mdm_data_stream_identifier,
                 )
                 .first()
             )

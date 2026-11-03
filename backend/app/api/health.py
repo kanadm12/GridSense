@@ -4,7 +4,7 @@ import logging
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from rq import Queue
+from rq import Queue, Worker
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -50,14 +50,20 @@ def readiness(db: Session = Depends(get_db)) -> dict:
 def worker_health(current_user: dict = Depends(get_current_user)) -> dict:
     """Check RQ worker status (requires authentication)."""
     try:
-        from app.worker import get_redis_conn
+        from app.tasks import get_redis_conn
 
         redis = get_redis_conn()
         queue = Queue("default", connection=redis)
 
-        workers = queue.workers
+        workers = Worker.all(connection=redis, queue=queue)
         jobs_queued = queue.count
         failed_jobs = queue.failed_job_registry.count
+
+        if not workers:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={"status": "unavailable", "worker": "not_running", "workers": 0},
+            )
 
         return {
             "status": "ok",
@@ -66,6 +72,8 @@ def worker_health(current_user: dict = Depends(get_current_user)) -> dict:
             "jobs_failed": failed_jobs,
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.error(
             "Worker health check failed",

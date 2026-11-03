@@ -22,6 +22,8 @@ import {
   setAuthExpiredHandler,
 } from '@/services/api';
 
+let accountDataEpoch = 0;
+
 // Auth Store
 interface AuthState {
   user: User | null;
@@ -43,6 +45,7 @@ export const useAuthStore = create<AuthState>((set) => ({
   error: null,
 
   login: async (email, password) => {
+    resetAccountScopedData();
     set({ isLoading: true, error: null });
     try {
       await authApi.login(email, password);
@@ -58,6 +61,7 @@ export const useAuthStore = create<AuthState>((set) => ({
   },
 
   register: async (email, password, fullName) => {
+    resetAccountScopedData();
     set({ isLoading: true, error: null });
     try {
       await authApi.register(email, password, fullName);
@@ -77,8 +81,7 @@ export const useAuthStore = create<AuthState>((set) => ({
   logout: async () => {
     await removeToken();
     await removeRefreshToken();
-    useMetersStore.getState().clearMeters();
-    useUsageStore.getState().clearUsage();
+    resetAccountScopedData();
     set({ user: null, isAuthenticated: false });
   },
 
@@ -95,6 +98,7 @@ export const useAuthStore = create<AuthState>((set) => ({
     } catch {
       await removeToken();
       await removeRefreshToken();
+      resetAccountScopedData();
       set({ isLoading: false, isAuthenticated: false });
     }
   },
@@ -124,19 +128,24 @@ export const useMetersStore = create<MetersState>((set, get) => ({
   error: null,
 
   fetchMeters: async () => {
+    const requestEpoch = accountDataEpoch;
     set({ isLoading: true, error: null });
     try {
       const meters = await metersApi.list();
+      if (requestEpoch !== accountDataEpoch) return;
       const userId = useAuthStore.getState().user?.id;
       let savedMeterId: number | null = null;
       if (userId) {
         try {
           const storedId = await AsyncStorage.getItem(selectedMeterStorageKey(userId));
+          if (requestEpoch !== accountDataEpoch) return;
           savedMeterId = storedId ? Number(storedId) : null;
         } catch (error: unknown) {
+          if (requestEpoch !== accountDataEpoch) return;
           set({ error: `Could not restore the saved meter selection: ${getErrorMessage(error)}` });
         }
       }
+      if (requestEpoch !== accountDataEpoch) return;
       const currentMeterId = get().selectedMeter?.id;
       const selectedMeter =
         meters.find((meter) => meter.id === currentMeterId) ??
@@ -152,6 +161,7 @@ export const useMetersStore = create<MetersState>((set, get) => ({
         await AsyncStorage.setItem(selectedMeterStorageKey(userId), String(selectedMeter.id));
       }
     } catch (error: unknown) {
+      if (requestEpoch !== accountDataEpoch) return;
       set({
         error: getErrorMessage(error),
         isLoading: false,
@@ -171,8 +181,10 @@ export const useMetersStore = create<MetersState>((set, get) => ({
   },
 
   deleteMeter: async (meterId) => {
+    const requestEpoch = accountDataEpoch;
     try {
       await metersApi.delete(meterId);
+      if (requestEpoch !== accountDataEpoch) return;
       const meters = get().meters.filter((m) => m.id !== meterId);
       const selectedMeter =
         get().selectedMeter?.id === meterId ? meters[0] || null : get().selectedMeter;
@@ -185,11 +197,13 @@ export const useMetersStore = create<MetersState>((set, get) => ({
         await AsyncStorage.setItem(selectedMeterStorageKey(userId), String(selectedMeter.id));
       }
     } catch (error: unknown) {
+      if (requestEpoch !== accountDataEpoch) return;
       set({ error: getErrorMessage(error) });
     }
   },
 
-  clearMeters: () => set({ meters: [], selectedMeter: null, error: null }),
+  clearMeters: () =>
+    set({ meters: [], selectedMeter: null, isLoading: false, error: null }),
 }));
 
 setAuthExpiredHandler(() => {
@@ -199,8 +213,7 @@ setAuthExpiredHandler(() => {
     isLoading: false,
     error: 'Your session expired. Please sign in again.',
   });
-  useMetersStore.getState().clearMeters();
-  useUsageStore.getState().clearUsage();
+  resetAccountScopedData();
 });
 
 // Usage Store
@@ -226,33 +239,43 @@ export const useUsageStore = create<UsageState>((set) => ({
   error: null,
 
   fetchSummary: async (meterId) => {
+    const requestEpoch = accountDataEpoch;
     try {
       const summary = await usageApi.getSummary(meterId);
+      if (requestEpoch !== accountDataEpoch) return;
       set({ summary });
     } catch (error: unknown) {
+      if (requestEpoch !== accountDataEpoch) return;
       set({ error: getErrorMessage(error) });
     }
   },
 
   fetchDaily: async (meterId, days = 30) => {
+    const requestEpoch = accountDataEpoch;
     try {
       const dailyUsage = await usageApi.getDaily(meterId, days);
+      if (requestEpoch !== accountDataEpoch) return;
       set({ dailyUsage });
     } catch (error: unknown) {
+      if (requestEpoch !== accountDataEpoch) return;
       set({ error: getErrorMessage(error) });
     }
   },
 
   fetchHourly: async (meterId) => {
+    const requestEpoch = accountDataEpoch;
     try {
       const hourlyUsage = await usageApi.getHourly(meterId);
+      if (requestEpoch !== accountDataEpoch) return;
       set({ hourlyUsage });
     } catch (error: unknown) {
+      if (requestEpoch !== accountDataEpoch) return;
       set({ error: getErrorMessage(error) });
     }
   },
 
   fetchAllUsageData: async (meterId) => {
+    const requestEpoch = accountDataEpoch;
     set({ isLoading: true, error: null });
     try {
       const [summary, dailyUsage, hourlyUsage] = await Promise.all([
@@ -260,8 +283,10 @@ export const useUsageStore = create<UsageState>((set) => ({
         usageApi.getDaily(meterId, 30),
         usageApi.getHourly(meterId),
       ]);
+      if (requestEpoch !== accountDataEpoch) return;
       set({ summary, dailyUsage, hourlyUsage, isLoading: false });
     } catch (error: unknown) {
+      if (requestEpoch !== accountDataEpoch) return;
       set({
         error: getErrorMessage(error),
         isLoading: false,
@@ -274,6 +299,7 @@ export const useUsageStore = create<UsageState>((set) => ({
       summary: null,
       dailyUsage: [],
       hourlyUsage: [],
+      isLoading: false,
       error: null,
     }),
 }));
@@ -286,6 +312,7 @@ interface RecommendationsState {
   error: string | null;
 
   fetchRecommendations: (meterId?: number) => Promise<void>;
+  clearRecommendations: () => void;
 }
 
 export const useRecommendationsStore = create<RecommendationsState>((set) => ({
@@ -295,21 +322,38 @@ export const useRecommendationsStore = create<RecommendationsState>((set) => ({
   error: null,
 
   fetchRecommendations: async (meterId) => {
+    const requestEpoch = accountDataEpoch;
     set({ isLoading: true, error: null });
     try {
       const response = meterId
         ? await recommendationsApi.getForMeter(meterId)
         : await recommendationsApi.getAll();
+      if (requestEpoch !== accountDataEpoch) return;
       set({
         recommendations: response.recommendations,
         totalSavings: response.total_potential_savings,
         isLoading: false,
       });
     } catch (error: unknown) {
+      if (requestEpoch !== accountDataEpoch) return;
       set({
         error: getErrorMessage(error),
         isLoading: false,
       });
     }
   },
+  clearRecommendations: () =>
+    set({
+      recommendations: [],
+      totalSavings: null,
+      isLoading: false,
+      error: null,
+    }),
 }));
+
+function resetAccountScopedData(): void {
+  accountDataEpoch += 1;
+  useMetersStore.getState().clearMeters();
+  useUsageStore.getState().clearUsage();
+  useRecommendationsStore.getState().clearRecommendations();
+}

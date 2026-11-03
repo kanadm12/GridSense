@@ -1,0 +1,12 @@
+# Reviewed synthetic JWT fixture findings (Prompt 23E). Exact fingerprints only.
+# Verified with Gitleaks v8.24.2 detect --no-git. Any new fingerprint fails the scan.
+/repo/backend/scripts/generate_legacy_jwt_fixtures.py:generic-api-key:101
+/repo/backend/tests/fixtures/auth/legacy_jose_tokens.json:generic-api-key:3
+/repo/backend/tests/fixtures/auth/legacy_jose_tokens.json:jwt:18
+/repo/backend/tests/fixtures/auth/legacy_jose_tokens.json:jwt:28
+/repo/backend/tests/fixtures/auth/legacy_jose_tokens.json:jwt:38
+/repo/backend/tests/fixtures/auth/legacy_jose_tokens.json:jwt:47
+/repo/backend/tests/fixtures/auth/legacy_jose_tokens.json:jwt:56
+/repo/backend/tests/fixtures/auth/legacy_jose_tokens.json:jwt:65
+/repo/backend/tests/fixtures/auth/legacy_jose_tokens.json:jwt:74
+/repo/backend/tests/fixtures/auth/legacy_jose_tokens.json:jwt:8

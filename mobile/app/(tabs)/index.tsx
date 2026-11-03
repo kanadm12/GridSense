@@ -11,6 +11,7 @@ import {
 import { router } from 'expo-router';
 import { useMetersStore, useUsageStore, useAuthStore } from '@/stores';
 import BillComparison from '@/components/BillComparison';
+import WeatherGridContext from '@/components/WeatherGridContext';
 import { Colors, Spacing, BorderRadius, FontSize, FontWeight, Shadow } from '@/constants/theme';
 import { Ionicons } from '@expo/vector-icons';
 
@@ -35,18 +36,14 @@ export default function DashboardScreen() {
   const isLoading = metersLoading || usageLoading;
 
   useEffect(() => {
-    loadData();
-  }, []);
+    void fetchMeters();
+  }, [fetchMeters]);
 
   useEffect(() => {
     if (selectedMeter) {
       fetchAllUsageData(selectedMeter.id);
     }
-  }, [selectedMeter]);
-
-  const loadData = async () => {
-    await fetchMeters();
-  };
+  }, [selectedMeter, fetchAllUsageData]);
 
   const greeting = () => {
     const hour = new Date().getHours();
@@ -56,7 +53,10 @@ export default function DashboardScreen() {
   };
 
   const formatCurrency = (value: number) => `$${value.toFixed(2)}`;
-  const formatKwh = (value: number) => `${value.toFixed(1)} kWh`;
+  const formatKwh = (value: number | null) =>
+    value === null ? 'Unavailable' : `${value.toFixed(1)} kWh`;
+  const formatDemand = (value: number | null) =>
+    value === null ? 'Unavailable' : `${value.toFixed(2)} kW`;
 
   if (meters.length === 0 && !metersLoading) {
     return (
@@ -92,7 +92,7 @@ export default function DashboardScreen() {
       style={styles.container}
       contentContainerStyle={styles.content}
       refreshControl={
-        <RefreshControl refreshing={isLoading} onRefresh={loadData} />
+        <RefreshControl refreshing={isLoading}         onRefresh={fetchMeters} />
       }
     >
       {/* Header */}
@@ -176,6 +176,8 @@ export default function DashboardScreen() {
         </View>
       )}
 
+      <WeatherGridContext />
+
       {/* Summary Cards */}
       {isLoading && !summary ? (
         <View style={styles.loadingCard}>
@@ -187,9 +189,15 @@ export default function DashboardScreen() {
           <View style={styles.statsGrid}>
             <View style={[styles.statCard, styles.primaryCard]}>
               <Ionicons name="flash" size={24} color={Colors.white} />
-              <Text style={styles.statValue}>{formatKwh(summary.total_kwh)}</Text>
-              <Text style={styles.statLabel}>Total Usage</Text>
-              <Text style={styles.statPeriod}>{summary.days_count} days</Text>
+              <Text style={styles.statValue}>
+                {summary.eligible_interval_count === 0
+                  ? 'Unavailable'
+                  : formatKwh(summary.eligible_import_kwh)}
+              </Text>
+              <Text style={styles.statLabel}>Eligible imported energy</Text>
+              <Text style={styles.statPeriod}>
+                {Math.round(summary.coverage_fraction * 100)}% eligible interval coverage
+              </Text>
             </View>
 
             <View style={styles.statCard}>
@@ -206,17 +214,48 @@ export default function DashboardScreen() {
           <View style={styles.statsRow}>
             <View style={[styles.smallCard]}>
               <Text style={styles.smallValue}>{formatKwh(summary.avg_daily_kwh)}</Text>
-              <Text style={styles.smallLabel}>Daily Avg</Text>
+              <Text style={styles.smallLabel}>Complete-day average</Text>
             </View>
             <View style={[styles.smallCard]}>
-              <Text style={styles.smallValue}>{summary.peak_hour}:00</Text>
-              <Text style={styles.smallLabel}>Peak Hour</Text>
+              <Text style={styles.smallValue}>
+                {formatDemand(summary.observed_interval_peak_demand_kw)}
+              </Text>
+              <Text style={styles.smallLabel}>Observed interval peak</Text>
             </View>
             <View style={[styles.smallCard]}>
-              <Text style={styles.smallValue}>{summary.off_peak_percentage}%</Text>
-              <Text style={styles.smallLabel}>Off-Peak</Text>
+              <Text style={styles.smallValue}>
+                {formatDemand(summary.observed_interval_average_demand_kw)}
+              </Text>
+              <Text style={styles.smallLabel}>Observed interval average</Text>
             </View>
           </View>
+
+          {(summary.explanation ||
+            summary.provenance_status === 'synthetic' ||
+            summary.coverage_status !== 'complete') && (
+            <View style={styles.qualityCard}>
+              <Text style={styles.qualityTitle}>
+                {summary.provenance_status === 'synthetic'
+                  ? 'Illustrative synthetic data'
+                  : summary.channel_classification_status !== 'classified'
+                    ? 'Meter channel not classified'
+                    : summary.coverage_status === 'complete'
+                      ? 'Data quality note'
+                      : 'Partial interval coverage'}
+              </Text>
+              <Text style={styles.qualityMessage}>
+                {summary.provenance_status === 'synthetic'
+                  ? 'These readings are synthetic demonstration data, not measured household observations.'
+                  : summary.explanation ||
+                    `${summary.eligible_interval_count} of ${summary.expected_interval_count} expected intervals are eligible; ${summary.missing_interval_count} are missing.`}
+              </Text>
+              {summary.unresolved_direction_count + summary.legacy_direction_unverified_count > 0 && (
+                <Text style={styles.qualityMessage}>
+                  {summary.unresolved_direction_count + summary.legacy_direction_unverified_count} channel readings have unresolved direction and are excluded from eligible energy.
+                </Text>
+              )}
+            </View>
+          )}
 
           {/* Quick Actions */}
           <View style={styles.section}>
@@ -267,7 +306,12 @@ export default function DashboardScreen() {
           </View>
         </>
       ) : null}
-      {selectedMeter && <BillComparison meterId={selectedMeter.id} />}
+      {selectedMeter && (
+        <BillComparison
+          meterId={selectedMeter.id}
+          illustrativeScenario={summary?.provenance_status === 'synthetic'}
+        />
+      )}
     </ScrollView>
   );
 }
@@ -356,6 +400,24 @@ const styles = StyleSheet.create({
     marginTop: Spacing.xs,
   },
   errorHint: {
+    color: Colors.textSecondary,
+    fontSize: FontSize.xs,
+    marginTop: Spacing.xs,
+  },
+  qualityCard: {
+    backgroundColor: Colors.warning + '12',
+    borderRadius: BorderRadius.md,
+    borderWidth: 1,
+    borderColor: Colors.warning + '40',
+    padding: Spacing.md,
+    marginBottom: Spacing.md,
+  },
+  qualityTitle: {
+    color: Colors.text,
+    fontSize: FontSize.sm,
+    fontWeight: FontWeight.semibold,
+  },
+  qualityMessage: {
     color: Colors.textSecondary,
     fontSize: FontSize.xs,
     marginTop: Spacing.xs,

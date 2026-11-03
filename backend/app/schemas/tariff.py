@@ -1,6 +1,6 @@
 """Tariff schemas for Victorian electricity rates."""
 
-from datetime import date
+from datetime import date, datetime
 from enum import Enum
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -53,6 +53,9 @@ class TariffCreate(BaseModel):
     effective_from: date | None = None
     effective_to: date | None = None
     rates_include_gst: bool = True
+    confirmed: bool = False
+    unmodeled_components_confirmed_absent: bool = False
+    unsupported_components: list[str] = Field(default_factory=list)
 
     # Demand tariff
     demand_charge_dollars_kw: float | None = Field(default=None, ge=0)
@@ -108,6 +111,38 @@ class TariffResponse(BaseModel):
     is_preset: bool
     demand_charge_dollars_kw: float | None
     daily_supply_charge_cents: float
+    revision_number: int | None = None
+    confirmed_at: datetime | None = None
+    confirmation_source: str | None = None
+    is_confirmed: bool = False
+    unsupported_components: list[str] = Field(default_factory=list)
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class TariffRevisionResponse(BaseModel):
+    id: int
+    tariff_id: int
+    revision_number: int
+    source_type: str
+    source_plan_id: str | None
+    confirmed_at: datetime | None
+    effective_from: date | None
+    effective_to: date | None
+    tariff_type: TariffType
+    retailer_name: str | None
+    flat_rate_cents_kwh: float | None
+    peak_rate_cents_kwh: float | None
+    off_peak_rate_cents_kwh: float | None
+    shoulder_rate_cents_kwh: float | None
+    feed_in_rate_cents_kwh: float | None
+    periods: list[TariffPeriod] | None
+    rates_include_gst: bool
+    demand_charge_dollars_kw: float | None
+    daily_supply_charge_cents: float | None
+    unsupported_components: list[str]
+    is_illustrative: bool
+    created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
 

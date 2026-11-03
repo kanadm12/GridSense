@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -27,15 +27,26 @@ const categoryIcons: Record<string, keyof typeof Ionicons.glyphMap> = {
 };
 
 export default function RecommendationsScreen() {
+  const [expandedEvidence, setExpandedEvidence] = useState<string | null>(null);
+  const [now, setNow] = useState(0);
   const { selectedMeter } = useMetersStore();
   const { recommendations, fetchRecommendations, isLoading } =
     useRecommendationsStore();
 
   useEffect(() => {
+    const initialUpdate = setTimeout(() => setNow(Date.now()), 0);
+    const timer = setInterval(() => setNow(Date.now()), 60_000);
+    return () => {
+      clearTimeout(initialUpdate);
+      clearInterval(timer);
+    };
+  }, []);
+
+  useEffect(() => {
     if (selectedMeter) {
       fetchRecommendations(selectedMeter.id);
     }
-  }, [selectedMeter]);
+  }, [selectedMeter, fetchRecommendations]);
 
   const refresh = () => {
     if (selectedMeter) {
@@ -43,7 +54,27 @@ export default function RecommendationsScreen() {
     }
   };
 
-  const renderRecommendation = (rec: Recommendation) => (
+  const renderRecommendation = (rec: Recommendation) => {
+    const evidence = rec.calculation_evidence;
+    const evidenceExpired = Boolean(
+      evidence && new Date(evidence.expires_at).getTime() <= now,
+    );
+    const isExpanded = expandedEvidence === rec.id;
+    if (evidenceExpired) {
+      return (
+        <View key={rec.id} style={styles.card}>
+          <Text style={styles.cardTitle}>{rec.title}</Text>
+          <Text style={styles.statusText}>Evidence status: expired</Text>
+          <Text style={styles.detailText}>
+            This recommendation is no longer current. Refresh to reevaluate its source data.
+          </Text>
+          <TouchableOpacity style={styles.evidenceToggle} onPress={refresh}>
+            <Text style={styles.evidenceToggleText}>Refresh recommendations</Text>
+          </TouchableOpacity>
+        </View>
+      );
+    }
+    return (
     <View key={rec.id} style={styles.card}>
       <View style={styles.cardHeader}>
         <View style={[styles.iconContainer, { backgroundColor: priorityColors[rec.priority] + '20' }]}>
@@ -64,9 +95,15 @@ export default function RecommendationsScreen() {
       </View>
 
       <Text style={styles.description}>{rec.description}</Text>
+      <Text style={styles.statusText}>
+        Evidence status: {rec.status.replace(/_/g, ' ')}
+        {evidence ? ` · ${evidence.coverage.provenance_status}` : ''}
+      </Text>
 
       <View style={styles.evidenceContainer}>
-        <Text style={styles.detailLabel}>Observed</Text>
+        <Text style={styles.detailLabel}>
+          {evidence?.status === 'illustrative' ? 'Illustrative source data' : 'Observed'}
+        </Text>
         <Text style={styles.detailText}>{rec.observed_fact}</Text>
         <Text style={styles.detailLabel}>Baseline</Text>
         <Text style={styles.detailText}>{rec.baseline}</Text>
@@ -85,12 +122,6 @@ export default function RecommendationsScreen() {
         <Text style={styles.detailText}>{rec.conditional_opportunity}</Text>
         <Text style={styles.detailLabel}>Applicable intervals</Text>
         <Text style={styles.detailText}>{rec.applicable_intervals}</Text>
-        {rec.rate_difference_cents_kwh !== null && (
-          <Text style={styles.detailText}>
-            Configured rate spread: {rec.rate_difference_cents_kwh.toFixed(2)} c/kWh.
-            This is not a savings estimate.
-          </Text>
-        )}
         <Text style={styles.detailLabel}>Assumptions</Text>
         {rec.assumptions.map((assumption, index) => (
           <Text key={index} style={styles.detailText}>• {assumption}</Text>
@@ -107,8 +138,76 @@ export default function RecommendationsScreen() {
         <Text style={styles.reasonLabel}>Why this matters:</Text>
         <Text style={styles.reasonText}>{rec.reason}</Text>
       </View>
+
+      <TouchableOpacity
+        accessibilityRole="button"
+        accessibilityState={{ expanded: isExpanded }}
+        style={styles.evidenceToggle}
+        onPress={() => setExpandedEvidence(isExpanded ? null : rec.id)}
+      >
+        <Text style={styles.evidenceToggleText}>
+          {isExpanded ? 'Hide calculation details' : 'How was this calculated?'}
+        </Text>
+        <Ionicons
+          name={isExpanded ? 'chevron-up' : 'chevron-down'}
+          size={18}
+          color={Colors.primary}
+        />
+      </TouchableOpacity>
+      {isExpanded && (
+        <View style={styles.calculationDetails}>
+          {evidence ? (
+            <>
+              <Text style={styles.detailLabel}>Source and coverage</Text>
+              <Text style={styles.detailText}>
+                {evidence.coverage.eligible_intervals} eligible of {evidence.coverage.expected_intervals} expected intervals
+                {' '}({(evidence.coverage.coverage_fraction * 100).toFixed(1)}%); {evidence.coverage.coverage_status}.
+              </Text>
+              <Text style={styles.detailText}>
+                {evidence.input_record_count} source records · rule {evidence.rule_id} v{evidence.rule_version}
+              </Text>
+              <Text style={styles.detailText}>
+                Evaluated {new Date(evidence.created_at).toLocaleString('en-AU')} · expires {new Date(evidence.expires_at).toLocaleString('en-AU')}
+              </Text>
+              <Text style={styles.detailText}>
+                Analysis window: {evidence.analysis_start_date ?? 'unknown'} to {evidence.analysis_end_date ?? 'unknown'}
+              </Text>
+              <Text style={styles.detailLabel}>Eligibility checks</Text>
+              {Object.entries(evidence.eligibility_checks).map(([name, result]) => (
+                <Text key={name} style={styles.detailText}>
+                  {name.replace(/_/g, ' ')}: {result}
+                </Text>
+              ))}
+              <Text style={styles.detailLabel}>Method</Text>
+              <Text style={styles.detailText}>{evidence.calculation_method_version}</Text>
+              <Text style={styles.detailText}>{evidence.baseline_scenario}</Text>
+              <Text style={styles.detailLabel}>Calculated observations</Text>
+              {Object.entries(evidence.calculated_values).length > 0 ? (
+                Object.entries(evidence.calculated_values).map(([name, value]) => (
+                  <Text key={name} style={styles.detailText}>
+                    {name.replace(/_/g, ' ')}: {value}
+                    {evidence.value_units[name] ? ` ${evidence.value_units[name]}` : ''}
+                  </Text>
+                ))
+              ) : (
+                <Text style={styles.detailText}>No quantified impact is supported.</Text>
+              )}
+              <Text style={styles.detailLabel}>Limitations</Text>
+              {evidence.limitations.map((limitation, index) => (
+                <Text key={index} style={styles.detailText}>• {limitation}</Text>
+              ))}
+              <Text style={styles.detailText}>
+                Source digest: {evidence.input_digest_sha256 ?? 'unavailable'}
+              </Text>
+            </>
+          ) : (
+            <Text style={styles.detailText}>Calculation evidence is unavailable.</Text>
+          )}
+        </View>
+      )}
     </View>
-  );
+    );
+  };
 
   if (!selectedMeter) {
     return (
@@ -140,10 +239,10 @@ export default function RecommendationsScreen() {
         recommendations.map(renderRecommendation)
       ) : (
         <View style={styles.noRecommendations}>
-          <Ionicons name="checkmark-circle" size={48} color={Colors.success} />
-          <Text style={styles.noRecommendationsTitle}>Looking good!</Text>
+          <Ionicons name="information-circle" size={48} color={Colors.info} />
+          <Text style={styles.noRecommendationsTitle}>No current recommendations</Text>
           <Text style={styles.noRecommendationsText}>
-            We don't have any recommendations at the moment. Your energy usage patterns look efficient.
+            No supported action is available from the current evidence. This does not mean your usage is efficient.
           </Text>
         </View>
       )}
@@ -231,6 +330,12 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     marginBottom: Spacing.md,
   },
+  statusText: {
+    fontSize: FontSize.xs,
+    color: Colors.textSecondary,
+    marginBottom: Spacing.sm,
+    textTransform: 'capitalize',
+  },
   actionContainer: {
     flexDirection: 'row',
     alignItems: 'flex-start',
@@ -288,6 +393,26 @@ const styles = StyleSheet.create({
     fontSize: FontSize.sm,
     color: Colors.textSecondary,
     fontStyle: 'italic',
+  },
+  evidenceToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderTopWidth: 1,
+    borderTopColor: Colors.border,
+    paddingTop: Spacing.sm,
+    marginTop: Spacing.sm,
+  },
+  evidenceToggleText: {
+    color: Colors.primary,
+    fontSize: FontSize.sm,
+    fontWeight: FontWeight.semibold,
+  },
+  calculationDetails: {
+    marginTop: Spacing.sm,
+    padding: Spacing.sm,
+    borderRadius: BorderRadius.md,
+    backgroundColor: Colors.background,
   },
   noRecommendations: {
     alignItems: 'center',

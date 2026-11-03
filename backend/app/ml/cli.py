@@ -5,11 +5,10 @@ Usage:
     python -m app.ml.cli train-meter --meter-id 1
 """
 import argparse
-from datetime import date
 
 from app.database import SessionLocal
 from app.ml.etl import extract_daily_series
-from app.ml.train import train_forecast, train_anomaly_detector
+from app.ml.train import train_anomaly_detector, train_forecast
 
 
 def train_all():

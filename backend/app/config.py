@@ -35,6 +35,10 @@ class Settings(BaseSettings):
     # Redis for background jobs
     redis_url: str = "redis://localhost:6380/0"
 
+    # Open-Meteo paid endpoint credentials; the free non-commercial API is not used.
+    open_meteo_api_key: str = ""
+    weather_cache_ttl_seconds: int = 3600
+
     # Password reset email
     email_provider: str = "local"
     email_from: str = "GridSense <no-reply@gridsense.local>"

@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator } from 'rea
 import { Colors, Spacing, BorderRadius, FontSize, FontWeight, Shadow } from '@/constants/theme';
 import { Ionicons } from '@expo/vector-icons';
 import api from '@/services/api';
+import { router } from 'expo-router';
 
 interface BillComparisonData {
   meter_id: number;
@@ -11,18 +12,18 @@ interface BillComparisonData {
     current_start: string;
     current_end: string;
     current_kwh: number;
-    current_cost: number;
+    current_cost: number | null;
     current_days: number;
-    current_daily_avg_kwh: number;
+    current_daily_avg_kwh: number | null;
     previous_start: string;
     previous_end: string;
     previous_kwh: number;
-    previous_cost: number;
+    previous_cost: number | null;
     previous_days: number;
-    previous_daily_avg_kwh: number;
-    kwh_change: number;
+    previous_daily_avg_kwh: number | null;
+    kwh_change: number | null;
     kwh_change_percent: number | null;
-    cost_change: number;
+    cost_change: number | null;
     cost_change_percent: number | null;
     daily_avg_change_percent: number | null;
     trend: 'up' | 'down' | 'stable' | 'unavailable';
@@ -36,28 +37,34 @@ interface BillComparisonData {
 interface BillPeriodBreakdownData {
   start_date: string;
   end_date: string;
-  estimate_type: 'illustrative' | 'configured_tariff_estimate';
+  estimate_type: 'illustrative' | 'partial_estimate' | 'unavailable';
   tariff_status: string;
   data_status: string;
+  provenance_status: string;
   gst_treatment: string;
-  gst_amount: number;
-  total_cost: number;
-  line_items: Array<{
+  gst_amount: number | null;
+  total_cost: number | null;
+  customer_estimate_available: boolean;
+  full_bill_available: boolean;
+  coverage_fraction: number;
+  line_items: {
     label: string;
     amount: number;
     included_in_total: boolean;
-  }>;
+  }[];
   limitations: string[];
 }
 
 interface BillComparisonProps {
   meterId: number;
+  illustrativeScenario?: boolean;
   currentStart?: Date;
   currentEnd?: Date;
 }
 
 export default function BillComparison({
   meterId,
+  illustrativeScenario = false,
   currentStart,
   currentEnd,
 }: BillComparisonProps) {
@@ -81,6 +88,7 @@ export default function BillComparison({
           current_start: formatLocalDate(start),
           current_end: formatLocalDate(end),
         });
+        if (illustrativeScenario) params.set('illustrative_scenario', 'true');
 
         const response = await api.get(`/billing/comparison/${meterId}?${params}`);
         if (isMounted) {
@@ -99,7 +107,7 @@ export default function BillComparison({
 
     fetchData();
     return () => { isMounted = false; };
-  }, [meterId, currentStart, currentEnd]);
+  }, [meterId, currentStart, currentEnd, illustrativeScenario]);
 
   const fetchComparison = async () => {
     setLoading(true);
@@ -114,6 +122,7 @@ export default function BillComparison({
         current_start: formatLocalDate(start),
         current_end: formatLocalDate(end),
       });
+      if (illustrativeScenario) params.set('illustrative_scenario', 'true');
 
       const response = await api.get(`/billing/comparison/${meterId}?${params}`);
       setData(response.data);
@@ -157,7 +166,9 @@ export default function BillComparison({
   const trendLabel =
     comparison.trend === 'unavailable' ? 'Unavailable' :
     comparison.trend === 'stable' ? 'Stable' :
-    comparison.trend === 'down' ? 'Improved' : 'Increased';
+    comparison.trend === 'down' ? 'Lower import' : 'Higher import';
+  const neutralTrend = comparison.trend === 'down' || comparison.trend === 'up';
+  const displayedTrendColor = neutralTrend ? Colors.info : trendColor;
 
   return (
     <View style={styles.container}>
@@ -167,9 +178,9 @@ export default function BillComparison({
           <Text style={styles.title}>Bill Comparison</Text>
           <Text style={styles.subtitle}>{data.meter_name}</Text>
         </View>
-        <View style={[styles.trendBadge, { backgroundColor: trendColor + '15' }]}>
-          <Ionicons name={trendIcon} size={16} color={trendColor} />
-          <Text style={[styles.trendText, { color: trendColor }]}>
+        <View style={[styles.trendBadge, { backgroundColor: displayedTrendColor + '15' }]}>
+          <Ionicons name={trendIcon} size={16} color={displayedTrendColor} />
+          <Text style={[styles.trendText, { color: displayedTrendColor }]}>
             {trendLabel}
           </Text>
         </View>
@@ -179,9 +190,11 @@ export default function BillComparison({
       <View style={styles.comparisonRow}>
         {/* Current Period */}
         <View style={styles.periodCard}>
-          <Text style={styles.periodLabel}>This Period</Text>
-          <Text style={styles.costValue}>${comparison.current_cost.toFixed(2)}</Text>
-          <Text style={styles.kwhValue}>{comparison.current_kwh.toFixed(1)} kWh</Text>
+          <Text style={styles.periodLabel}>This Period · observed</Text>
+          <Text style={styles.costValue}>
+            {formatMoney(comparison.current_cost)}
+          </Text>
+          <Text style={styles.kwhValue}>{comparison.current_kwh.toFixed(1)} kWh eligible imports</Text>
           <Text style={styles.dateRange}>
             {formatDateRange(comparison.current_start, comparison.current_end)}
           </Text>
@@ -193,7 +206,7 @@ export default function BillComparison({
             name={
               comparison.cost_change_percent === null
                 ? 'remove'
-                : comparison.cost_change >= 0
+                : (comparison.cost_change ?? 0) >= 0
                   ? 'arrow-up'
                   : 'arrow-down'
             }
@@ -201,7 +214,7 @@ export default function BillComparison({
             color={
               comparison.cost_change_percent === null
                 ? Colors.textSecondary
-                : comparison.cost_change >= 0
+                : (comparison.cost_change ?? 0) >= 0
                   ? Colors.error
                   : Colors.success
             }
@@ -211,24 +224,24 @@ export default function BillComparison({
             {
               color: comparison.cost_change_percent === null
                 ? Colors.textSecondary
-                : comparison.cost_change >= 0
+                : (comparison.cost_change ?? 0) >= 0
                   ? Colors.error
                   : Colors.success,
             }
           ]}>
             {comparison.cost_change_percent === null
               ? 'N/A'
-              : `${comparison.cost_change >= 0 ? '+' : ''}${comparison.cost_change_percent.toFixed(1)}%`}
+              : `${(comparison.cost_change ?? 0) >= 0 ? '+' : ''}${comparison.cost_change_percent.toFixed(1)}%`}
           </Text>
         </View>
 
         {/* Previous Period */}
         <View style={[styles.periodCard, styles.previousPeriod]}>
-          <Text style={styles.periodLabel}>Last Period</Text>
+          <Text style={styles.periodLabel}>Last Period · observed</Text>
           <Text style={[styles.costValue, styles.previousCost]}>
-            ${comparison.previous_cost.toFixed(2)}
+            {formatMoney(comparison.previous_cost)}
           </Text>
-          <Text style={styles.kwhValue}>{comparison.previous_kwh.toFixed(1)} kWh</Text>
+          <Text style={styles.kwhValue}>{comparison.previous_kwh.toFixed(1)} kWh eligible imports</Text>
           <Text style={styles.dateRange}>
             {formatDateRange(comparison.previous_start, comparison.previous_end)}
           </Text>
@@ -239,17 +252,23 @@ export default function BillComparison({
       <View style={styles.statsRow}>
         <StatBox
           label="Daily Avg"
-          value={`${comparison.current_daily_avg_kwh.toFixed(1)} kWh`}
+          value={comparison.current_daily_avg_kwh === null
+            ? 'Unavailable'
+            : `${comparison.current_daily_avg_kwh.toFixed(1)} kWh`}
           change={comparison.daily_avg_change_percent}
         />
         <StatBox
           label="Usage Change"
-          value={`${Math.abs(comparison.kwh_change).toFixed(1)} kWh`}
+          value={comparison.kwh_change === null
+            ? 'Unavailable'
+            : `${Math.abs(comparison.kwh_change).toFixed(1)} kWh`}
           change={comparison.kwh_change_percent}
         />
         <StatBox
           label="Cost Change"
-          value={`$${Math.abs(comparison.cost_change).toFixed(2)}`}
+          value={comparison.cost_change === null
+            ? 'Unavailable'
+            : `$${Math.abs(comparison.cost_change).toFixed(2)}`}
           change={comparison.cost_change_percent}
         />
       </View>
@@ -290,12 +309,14 @@ function BillBreakdownCard({
     <View style={styles.breakdownCard}>
       <Text style={styles.breakdownTitle}>
         {title} · {breakdown.estimate_type === 'illustrative'
-          ? 'Illustrative estimate'
-          : 'Configured-tariff estimate'}
+          ? 'Illustrative scenario'
+          : breakdown.estimate_type === 'unavailable'
+            ? 'Estimate unavailable'
+            : 'Partial estimate'}
       </Text>
       <Text style={styles.breakdownStatus}>
         {formatDateRange(breakdown.start_date, breakdown.end_date)} ·{' '}
-        {breakdown.data_status.replace(/_/g, ' ')} data · tariff:{' '}
+        {breakdown.data_status.replace(/_/g, ' ')} {breakdown.provenance_status} data · tariff:{' '}
         {breakdown.tariff_status.replace(/_/g, ' ')} · GST:{' '}
         {breakdown.gst_treatment.replace(/_/g, ' ')}
       </Text>
@@ -310,16 +331,35 @@ function BillBreakdownCard({
         </View>
       ))}
       <View style={styles.breakdownTotalRow}>
-        <Text style={styles.breakdownTotalLabel}>Estimated total</Text>
+        <Text style={styles.breakdownTotalLabel}>
+          {breakdown.full_bill_available ? 'Estimated total' : 'Modeled components'}
+        </Text>
         <Text style={styles.breakdownTotalAmount}>
-          ${breakdown.total_cost.toFixed(2)}
+          {formatMoney(breakdown.total_cost)}
         </Text>
       </View>
       {breakdown.limitations.map((limitation, index) => (
         <Text key={index} style={styles.breakdownLimitation}>• {limitation}</Text>
       ))}
+      {['no_confirmed_tariff', 'outside_effective_dates', 'partially_priced'].includes(
+        breakdown.tariff_status
+      ) && (
+        <TouchableOpacity
+          style={styles.tariffAction}
+          onPress={() => router.push('/tariff-setup')}
+          accessibilityRole="link"
+          accessibilityLabel="Review or confirm tariff"
+        >
+          <Text style={styles.tariffActionText}>Review or confirm tariff</Text>
+          <Ionicons name="arrow-forward" size={16} color={Colors.primaryDark} />
+        </TouchableOpacity>
+      )}
     </View>
   );
+}
+
+function formatMoney(value: number | null): string {
+  return value === null ? 'Unavailable' : `$${value.toFixed(2)}`;
 }
 
 function StatBox({
@@ -536,6 +576,19 @@ const styles = StyleSheet.create({
     color: Colors.warning,
     fontSize: FontSize.xs,
     marginTop: Spacing.sm,
+  },
+  tariffAction: {
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.xs,
+    marginTop: Spacing.sm,
+    paddingVertical: Spacing.xs,
+  },
+  tariffActionText: {
+    color: Colors.primaryDark,
+    fontSize: FontSize.sm,
+    fontWeight: FontWeight.semibold,
   },
   statBox: {
     flex: 1,

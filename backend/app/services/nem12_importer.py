@@ -99,6 +99,14 @@ class NEM12Importer:
                                 timestamp=r.timestamp,
                                 interval_minutes=r.interval_minutes,
                                 value=r.value,
+                                source_value=r.source_value,
+                                source_unit=r.source_unit or meter_data.unit_of_measure,
+                                source_interval_date=r.source_interval_date,
+                                source_interval_number=r.source_interval_number,
+                                source_nmi_configuration=r.source_nmi_configuration,
+                                source_record_quality_method=r.source_record_quality_method,
+                                provenance_kind=r.provenance_kind or "measured",
+                                source_time_basis=r.source_time_basis,
                                 quality=r.quality,
                                 register_type=r.register_type,
                                 direction=r.direction,
@@ -118,6 +126,14 @@ class NEM12Importer:
                                 timestamp=r["timestamp"],
                                 interval_minutes=r.get("interval_minutes", 30),
                                 value=r["value"],
+                                source_value=r.get("source_value", r["value"]),
+                                source_unit=r.get("source_unit", meter_data.unit_of_measure),
+                                source_interval_date=r.get("source_interval_date"),
+                                source_interval_number=r.get("source_interval_number"),
+                                source_nmi_configuration=r.get("source_nmi_configuration"),
+                                source_record_quality_method=r.get("source_record_quality_method"),
+                                provenance_kind=r.get("provenance_kind", "measured"),
+                                source_time_basis=r.get("source_time_basis"),
                                 quality=r.get("quality", "A"),
                                 register_type=r.get("register_type", "U"),
                                 direction=r.get("direction", "unknown"),
@@ -179,6 +195,8 @@ class NEM12Importer:
                         Meter.nmi == meter_data.nmi,
                         Meter.suffix == meter_data.suffix,
                         Meter.register_id == meter_data.register_id,
+                        Meter.mdm_data_stream_identifier
+                        == meter_data.mdm_data_stream_identifier,
                         Meter.user_id == user_id,
                     )
                     .first()
@@ -212,23 +230,34 @@ class NEM12Importer:
                 Meter.nmi == meter_data.nmi,
                 Meter.suffix == (meter_data.suffix or ""),
                 Meter.register_id == meter_data.register_id,
+                Meter.mdm_data_stream_identifier
+                == meter_data.mdm_data_stream_identifier,
                 Meter.user_id == user_id,
             )
             .first()
         )
         if meter is None:
-            meter = (
+            legacy_register_filter = (
+                Meter.register_id == meter_data.register_id
+                if meter_data.mdm_data_stream_identifier
+                else Meter.register_id.is_(None)
+            )
+            legacy_candidates = (
                 db.query(Meter)
                 .filter(
                     Meter.nmi == meter_data.nmi,
                     Meter.suffix == (meter_data.suffix or ""),
-                    Meter.register_id.is_(None),
+                    legacy_register_filter,
+                    Meter.mdm_data_stream_identifier.is_(None),
                     Meter.user_id == user_id,
                 )
-                .first()
+                .all()
             )
+            if len(legacy_candidates) == 1:
+                meter = legacy_candidates[0]
         if meter:
             meter.register_id = meter_data.register_id
+            meter.mdm_data_stream_identifier = meter_data.mdm_data_stream_identifier
             db.flush()
             return meter
 
@@ -237,6 +266,7 @@ class NEM12Importer:
             nmi=meter_data.nmi,
             meter_serial=meter_data.meter_serial,
             register_id=meter_data.register_id,
+            mdm_data_stream_identifier=meter_data.mdm_data_stream_identifier,
             suffix=meter_data.suffix,
             unit_of_measure=meter_data.unit_of_measure,
             interval_minutes=meter_data.interval_minutes,

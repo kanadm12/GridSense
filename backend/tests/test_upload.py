@@ -229,11 +229,27 @@ def test_importer_persists_readings_and_aggregates():
     assert agg is None
 
     meter = db.query(Meter).filter(Meter.register_id == "E1").first()
+    assert meter.mdm_data_stream_identifier == "N1"
+    first_reading = (
+        db.query(Reading)
+        .filter(Reading.meter_id == meter.id)
+        .order_by(Reading.timestamp)
+        .first()
+    )
+    assert first_reading.source_interval_date == datetime(2025, 4, 1).date()
+    assert first_reading.source_interval_number == 1
+    assert first_reading.source_nmi_configuration == "E1"
+    assert first_reading.source_record_quality_method == "A"
+    assert first_reading.source_time_basis == "unverified_nem12_clock_basis"
     db.add(
         Reading(
             meter_id=meter.id,
             timestamp=datetime(2025, 4, 1, 0, 30),
             value=1.25,
+            source_value=1.25,
+            source_unit="kWh",
+            provenance_kind="measured",
+            source_time_basis="fixed_utc_plus_10",
             quality="A",
             register_type="B",
             direction="import",
@@ -245,6 +261,44 @@ def test_importer_persists_readings_and_aggregates():
     assert agg is not None
     assert agg.total_kwh == 1.25
 
+    db.close()
+
+
+def test_import_keeps_same_timestamp_channels_separate_by_data_stream_identifier():
+    db = TestingSessionLocal()
+    user = User(
+        email="multi-stream@example.com",
+        hashed_password=AuthService.hash_password("password"),
+        full_name="Multi Stream",
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+
+    values = ",".join(["0.5"] * 48)
+    content = (
+        "100,NEM12,202512021200,TEST,AEMO\n"
+        "200,1234567890,E1,1,E1,N1,SERIAL,kWh,30,\n"
+        f"300,20251201,{values},A,,,\n"
+        "200,1234567890,E1,1,E1,N2,SERIAL,kWh,30,\n"
+        f"300,20251201,{values},A,,,\n"
+        "900\n"
+    )
+
+    result = NEM12Importer().import_file(
+        db, user.id, content, filename="multiple-streams.csv"
+    )
+
+    meters = (
+        db.query(Meter)
+        .filter(Meter.user_id == user.id)
+        .order_by(Meter.mdm_data_stream_identifier)
+        .all()
+    )
+    assert len(result.meters) == 2
+    assert [meter.mdm_data_stream_identifier for meter in meters] == ["N1", "N2"]
+    assert db.query(Reading).filter(Reading.meter_id == meters[0].id).count() == 48
+    assert db.query(Reading).filter(Reading.meter_id == meters[1].id).count() == 48
     db.close()
 
 

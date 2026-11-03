@@ -22,8 +22,8 @@ async def get_recommendations(
 ) -> RecommendationsResponse:
     """Get personalized energy recommendations for a meter.
 
-    Analyzes usage patterns and provides actionable recommendations
-    to reduce energy costs and improve efficiency.
+    Analyzes only complete, classifiable interval windows. Findings are
+    unquantified observations unless deterministic evidence supports a result.
     """
     verify_meter_ownership(db, meter_id, current_user.id)
 

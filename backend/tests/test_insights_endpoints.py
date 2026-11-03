@@ -12,15 +12,17 @@ because they only surface once the full request/response cycle runs:
   meter_id exercises that path.
 """
 
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta, timezone
 from importlib import import_module
 from types import SimpleNamespace
+from zoneinfo import ZoneInfo
 
 import pytest
 from fastapi.testclient import TestClient
 from slowapi import Limiter
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.engine import Engine
+from sqlalchemy.orm import Session, sessionmaker
 
 from app.api.deps import get_current_user
 from app.database import get_db
@@ -29,31 +31,33 @@ from app.models.base import Base
 from app.models.meter import Meter
 from app.models.reading import Reading
 from app.models.user import User
+from app.services.interval_quality import expected_interval_ends_utc
 
 import_module("app.models")
 
-# Distinct shared in-memory DB so this module never collides with test_auth's.
-SQLALCHEMY_TEST_DATABASE_URL = "sqlite:///file:insights_tests_db?mode=memory&cache=shared"
-engine = create_engine(
-    SQLALCHEMY_TEST_DATABASE_URL,
-    connect_args={"check_same_thread": False, "uri": True},
-)
-TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+engine: Engine
+testing_session_local: sessionmaker[Session]
 
 
 def override_get_db():
     try:
-        db = TestingSessionLocal()
+        db = testing_session_local()
         yield db
     finally:
         db.close()
 
 
 @pytest.fixture(autouse=True)
-def setup_database():
-    Base.metadata.create_all(bind=engine)
-    yield
-    Base.metadata.drop_all(bind=engine)
+def setup_database(tmp_path):
+    global engine, testing_session_local
+    engine = create_engine(f"sqlite:///{tmp_path / 'insights.sqlite3'}")
+    testing_session_local = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    try:
+        Base.metadata.create_all(bind=engine)
+        yield
+    finally:
+        Base.metadata.drop_all(bind=engine)
+        engine.dispose()
 
 
 def _seed(db) -> tuple[int, int]:
@@ -72,11 +76,16 @@ def _seed(db) -> tuple[int, int]:
     db.refresh(meter)
 
     readings = []
+    fixed_market_time = timezone(timedelta(hours=10))
+    melbourne = ZoneInfo("Australia/Melbourne")
     for day_offset in range(35, -1, -1):  # today-35 .. today inclusive
         day = date.today() - timedelta(days=day_offset)
-        for half_hour in range(48):
-            ts = datetime.combine(day, datetime.min.time()) + timedelta(minutes=30 * half_hour)
-            hour = ts.hour
+        for end_utc in expected_interval_ends_utc(day, "VIC", meter.interval_minutes):
+            interval_start_local = (
+                end_utc - timedelta(minutes=meter.interval_minutes)
+            ).astimezone(melbourne)
+            ts = end_utc.astimezone(fixed_market_time).replace(tzinfo=None)
+            hour = interval_start_local.hour
             if 15 <= hour < 21:
                 value = 1.0
             elif hour >= 22 or hour < 7:
@@ -88,8 +97,13 @@ def _seed(db) -> tuple[int, int]:
                     meter_id=meter.id,
                     timestamp=ts,
                     value=value,
+                    source_value=value,
+                    source_unit="kWh",
+                    provenance_kind="measured",
+                    source_time_basis="fixed_utc_plus_10",
                     quality="A",
                     register_type="B",
+                    direction="import",
                 )
             )
     db.add_all(readings)
@@ -100,9 +114,11 @@ def _seed(db) -> tuple[int, int]:
 @pytest.fixture
 def api():
     """Authenticated TestClient plus the seeded ids, with db + auth overridden."""
+    previous_overrides = app.dependency_overrides.copy()
+    previous_limiter = app.state.limiter
     app.state.limiter = Limiter(key_func=lambda req: "test", default_limits=[])
 
-    db = TestingSessionLocal()
+    db = testing_session_local()
     try:
         user_id, meter_id = _seed(db)
     finally:
@@ -121,10 +137,13 @@ def api():
 
     app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id=user_id)
 
-    with TestClient(app) as client:
-        yield SimpleNamespace(client=client, user_id=user_id, meter_id=meter_id)
-
-    app.dependency_overrides.clear()
+    try:
+        with TestClient(app) as client:
+            yield SimpleNamespace(client=client, user_id=user_id, meter_id=meter_id)
+    finally:
+        app.dependency_overrides.clear()
+        app.dependency_overrides.update(previous_overrides)
+        app.state.limiter = previous_limiter
 
 
 class TestInsightsEndpoints:
@@ -162,6 +181,12 @@ class TestInsightsEndpoints:
         body = resp.json()
         assert "greeting" in body
         assert "yesterday_usage_kwh" in body
+        assert body["comparison_to_average"] is not None
+        assert all(insight["impact_dollars"] is None for insight in body["insights"])
+        assert all(
+            "caused" not in insight["message"].lower()
+            for insight in body["insights"]
+        )
 
 
 class TestUsageEndpoint:
@@ -188,3 +213,7 @@ class TestBillingEndpoint:
         body = resp.json()
         assert body["meter_name"] == "Insights Meter"
         assert "comparison" in body
+        assert body["comparison"]["trend"] == "stable"
+        assert body["comparison"]["kwh_change_percent"] == 0
+        assert body["comparison"]["current_daily_avg_kwh"] is not None
+        assert body["recommendations"] == []

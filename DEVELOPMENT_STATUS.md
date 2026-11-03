@@ -1,6 +1,6 @@
 # GridSense Development Status
 
-**Review date:** 31 October 2026
+**Review date:** 2 November 2026
 **Scope:** `backend/` and `mobile/`, with the root README, Docker Compose file, CI workflow, and recent Git history used for project context.
 
 ## Executive summary
@@ -31,7 +31,7 @@ This makes the application a combination of an energy-data pipeline, a household
 
 | Area | Current implementation |
 |---|---|
-| Mobile client | React Native, Expo SDK 54-era dependencies, Expo Router, Zustand, Axios, and React Native Web. See [mobile/package.json](mobile/package.json) and [mobile/app.json](mobile/app.json). |
+| Mobile client | React Native, Expo SDK 58, Expo Router, Zustand, Axios, and React Native Web. See [mobile/package.json](mobile/package.json) and [mobile/app.json](mobile/app.json). |
 | API | Python 3.11+ FastAPI application with routers under `/api/v1`; health endpoints are outside that prefix. See [backend/app/main.py](backend/app/main.py). |
 | Persistence | SQLAlchemy models; SQLite is the local default, while the deployment docs and Compose stack use PostgreSQL. See [backend/app/database.py](backend/app/database.py) and [docker-compose.yml](docker-compose.yml). |
 | Background work | Redis and RQ worker for imports and other jobs, plus a separate scheduler process. See [backend/app/worker.py](backend/app/worker.py), [backend/app/tasks.py](backend/app/tasks.py), and [backend/app/scheduler.py](backend/app/scheduler.py). |
@@ -68,7 +68,7 @@ The model layer represents the main application concepts:
 - Smart devices, automation rules, schedules, and grid signals.
 - ML training job status and metrics.
 
-These are defined in [backend/app/models/](backend/app/models/). Alembic migration configuration and four migration files are present under [backend/alembic/](backend/alembic/). The schema has therefore been given a versioned migration workflow; however, the initial migration delegates to SQLAlchemy `Base.metadata.create_all` rather than spelling out each table operation, making the original schema less explicit to audit than later hand-authored DDL would be.
+These are defined in [backend/app/models/](backend/app/models/). Alembic migration configuration and five migration files are present under [backend/alembic/](backend/alembic/). The schema has therefore been given a versioned migration workflow; however, the initial migration delegates to SQLAlchemy `Base.metadata.create_all` rather than spelling out each table operation, making the original schema less explicit to audit than later hand-authored DDL would be.
 
 ### NEM12 import and data pipeline
 
@@ -86,7 +86,7 @@ The parser, importer, and task implementations are in [backend/app/services/nem1
 
 The initial parser assigned register type `B` to every reading, ignored 400-record quality events, converted blank intervals to zero, and keyed channels without `RegisterID`. Those behaviors were unsafe for multiple channels and unresolved direction. The follow-up implementation now preserves `RegisterID`, `NMISuffix`, quality method/reason fields, handles interval event ranges, skips missing values rather than inventing zeroes, and stores newly parsed direction as `unknown` until an authoritative suffix mapping is verified. Consumption analytics exclude such unknown readings instead of silently treating them as imports. Import tests now cover multiple channels, partial days, quality events, duplicate imports, unit conversion, unsupported units, and the upload size cap.
 
-Direction mapping is still an explicit limitation: the current AEMO MDFF specification describes the NEM12 fields but refers suffix semantics to the separate NMI Procedure; the MDFF example is not sufficient evidence for a universal import/export mapping. Non-kWh/non-Wh UOMs are preserved on the meter but their readings are omitted from kWh analytics with an upload warning. Clock processing now persists interval duration and classifies billing/chart buckets using explicit local interval boundaries, with Melbourne DST transition tests. The fixed UTC+10 interpretation of source NEM12 timestamps still needs confirmation against an authoritative AEMO clock-basis reference.
+Direction mapping remains an explicit limitation: MDFF v2.7 describes NEM12 channel fields but refers suffix semantics to the separate NMI Procedure; no universal import/export mapping is inferred. Non-kWh/non-Wh UOM readings are preserved with source values/units but are ineligible for kWh analytics. The parser preserves nominal interval-end position based on `IntervalDate` and index. No UTC+10 interpretation is applied to NEM12; UTC conversion remains blocked pending authoritative clock/DST procedures.
 
 ### Usage, tariffs, billing, and recommendations
 
@@ -171,7 +171,7 @@ Offline infrastructure exists in [mobile/services/offline.ts](mobile/services/of
 
 ### UI, theme, platform, and build setup
 
-[mobile/constants/theme.ts](mobile/constants/theme.ts) centralizes colors, spacing, typography, shadows, chart colors, and gradient presets. Reusable UI includes an error fallback, offline banner, and bill comparison component. The project configuration targets iOS, Android, and web; the package manifest uses Expo SDK 54-era dependencies, React 19, React Native 0.81, Expo Router, SecureStore, notifications, document picking, gifted charts, and React Native Web.
+[mobile/constants/theme.ts](mobile/constants/theme.ts) centralizes colors, spacing, typography, shadows, chart colors, and gradient presets. Reusable UI includes an error fallback, offline banner, and bill comparison component. The project configuration targets iOS, Android, and web; the current package manifest uses Expo SDK 58, React 19.3, React Native 0.88.1, Expo Router, SecureStore, notifications, document picking, gifted charts, and React Native Web.
 
 The package declares `lint` and `test` scripts, including Jest, and the root CI workflow includes a TypeScript check. No mobile test files were visible in the reviewed source inventory. The mobile README still says Expo SDK 50 and includes older `expo build:*` guidance, so setup documentation should be refreshed to match the current package versions and modern EAS configuration.
 
@@ -318,7 +318,7 @@ This is a sparse history of five reachable commits, so it cannot establish a ful
 - **Unwired mobile feature surfaces:** weekly usage is exposed by the API client but not integrated into the store/screen flow. Bill comparison is mounted, but the current sample cannot produce a classifiable usage trend.
 - **Background durability:** the in-process upload fallback is not equivalent to durable queued execution.
 - **ML lifecycle:** model files are local per-meter artifacts, with no evident registry, versioning, deployment promotion, or monitoring.
-- **NEM12 edge cases:** source direction remains unknown pending a verified NMI Procedure mapping; fixed UTC+10 source-time interpretation is implemented but needs confirmation from an authoritative AEMO reference.
+- **NEM12 edge cases:** MDFF v2.7 nominal interval indexing and 300/400 quality-event structures are now verified locally. Source direction remains unknown pending NMI Procedure/MSATS evidence; timezone/UTC/DST realization remains blocked pending related AEMO procedures.
 - **Tariff history and bill accuracy:** one mutable tariff row is stored per user, so historical rates cannot be reconstructed after edits. Custom windows have no public-holiday calendar, preset rates are illustrative, demand charges are estimates, and feed-in credits have no separate GST adjustment. Bill estimates disclose missing/unresolved data and do not claim to reproduce retailer invoices.
 - **Tariff-backed cost surfaces:** usage and forecast cost fields are currently unavailable rather than applying a default rate. Future work can integrate effective-dated user tariffs into those views and restore cost-based alerts only after such pricing is covered by tests.
 - **Scheduling preview:** the API and mobile preview flow are connected, but plans and accept/reject choices are not persisted and no execution/dispatch path exists. The mobile demo uses a synthetic baseline; a dashboard action now keeps the preview reachable for the no-readings scheduling account. It does not demonstrate measured household load or realized savings.
@@ -364,3 +364,593 @@ Prompt 15 final acceptance is **PARTIAL**, not signed off. See the detailed
 These local SQLite results do not validate PostgreSQL/Redis, backup restore,
 actual NEM12 register direction/clock basis, customer savings, appliance
 dispatch, or production readiness.
+
+## Stage 1 architecture foundation — Prompt 16B
+
+The accuracy-first Stage 1 design is now persisted in
+[`backend/docs/stage1/`](backend/docs/stage1/). The seven specifications define
+product requirements and capability status, metrics and feature-specific data
+quality, external-provider boundaries, the recommendation evidence contract,
+acceptance tests, and the Prompt 17–21 implementation backlog. This is a
+documentation foundation, not a claim that the specified capabilities have
+been implemented.
+
+The specifications explicitly prevent unknown NEM12 direction from being
+silently treated as import, classify the legacy `direction=None` plus register
+type `B` path as unverified, require coverage-aware metrics, and disallow
+silent illustrative-tariff fallbacks. Synthetic, user-entered, measured,
+forecast, and derived data have distinct provenance. Scheduling must avoid
+counting a flexible appliance both in baseline demand and as a separate task.
+No database migration or external provider integration was made in this task.
+
+Official-source verification remains incomplete: the AER PRD source timed out,
+AEMO market-data and metering pages returned HTTP 403, and MDFF v2.7 / NMI
+Procedure v7.4 applicability and future effective dates could not be
+independently confirmed. Open-Meteo's official documentation, terms, and
+pricing pages were accessible; exact archived-run semantics and applicable
+subscription entitlement remain to be confirmed before dependent
+implementation. See
+[`EXTERNAL_DATA_INTEGRATION_DESIGN.md`](backend/docs/stage1/EXTERNAL_DATA_INTEGRATION_DESIGN.md)
+for the source-by-source evidence and blockers.
+
+The verification baseline for this documentation task is Git revision
+`d789f9814da9955db1c63ced921a95379dd08495`. The full backend test suite was
+rerun successfully (189 passed, 11 warnings); this validates existing behavior,
+not the new normative requirements. Detailed command and worktree notes are in
+[`BASELINE_VERIFICATION.md`](BASELINE_VERIFICATION.md).
+
+## Coverage-aware metering and analytics — Prompt 17
+
+Prompt 17 is **PARTIAL**. The implementation now preserves raw source values
+and units, labels imported source time basis and provenance, excludes unknown
+direction and legacy `direction IS NULL AND register_type == "B"` from
+validated energy, and adds a reusable interval-eligibility and UTC coverage
+service. Coverage reports expected, observed, eligible, missing, excluded,
+duplicate, invalid, and unresolved counts; local-day denominators reflect
+Melbourne 46/48/50-slot half-hour days. Consumption, billing, forecasting,
+anomaly, and scheduling input filters require explicit eligible direction and
+quality/provenance where their current contracts permit.
+
+Usage responses and the mobile dashboard/usage screens now label observed
+eligible imported energy, partial coverage and missing intervals, synthetic
+demonstration data, and observed interval-average demand. Observed-interval
+average and peak are not described as instantaneous peak or full-period
+average; the latter is withheld unless eligible coverage is complete. An
+additive migration adds nullable audit/provenance columns without rewriting
+legacy timestamps or inferring old direction.
+
+## Prompt 17B — AEMO NEM12 source-time and quality validation
+
+The official AEMO MDFF NEM12/NEM13 v2.7 PDF was retrieved and inspected.
+Its title page specifies version 2.7, FINAL, effective 1 December 2025.
+Sections 3.3.2–3.3.3 and 4.3–4.5, plus Appendices B–E, establish format-level
+interval positions, channel fields, mixed-quality event handling and UOM
+semantics. The parser now preserves 1-based source interval coordinates,
+NMI configuration, RegisterID, NMISuffix, and MDMDataStreamIdentifier; 300
+`V` quality is resolved per interval only from valid full-day 400 ranges.
+Migration additions are nullable and do not backfill historical records.
+
+Prompt 17B remains **PARTIAL/BLOCKED** for real customer consumption. MDFF
+v2.7 defines nominal interval-end position relative to `IntervalDate`, but not
+the UTC offset or DST realization. The official AEMO metering-procedures page
+was blocked by HTTP 403/Cloudflare; the user-cited NMI Procedure v7.4,
+Metrology Procedure Part B and source-specific mapping evidence were not
+retrieved or independently verified. NEM12 direction remains unknown and its
+timestamps remain unavailable for UTC-based customer metrics. MDFF v2.7 is not
+assumed for historical data before 1 December 2025.
+
+See
+[`AEMO_NEM12_COMPLIANCE_MATRIX.md`](backend/docs/stage1/AEMO_NEM12_COMPLIANCE_MATRIX.md)
+for the exact source/page crosswalk and blockers, and
+[`PROMPT17_MIGRATION_COMPATIBILITY.md`](backend/docs/stage1/PROMPT17_MIGRATION_COMPATIBILITY.md)
+for migration, acceptance and test status. No tariff/customer cost claim is
+validated by this work.
+
+### Prompt 17B final verification
+
+The complete backend suite passed with **217 tests, 11 warnings**. Mobile
+TypeScript validation passed. Focused Ruff checks on the NEM12 parser,
+importer, and related tests passed; the broader selected-file lint run reported
+five existing adjacent style findings, which were left outside this change's
+scope. The additive Alembic chain passed an upgrade, downgrade to the prior
+revision, and re-upgrade against a disposable PostgreSQL 16 container. The
+container was stopped and removed after the check.
+
+These checks do not resolve the source semantics blocker: NEM12 direction is
+still unknown and timestamps remain unavailable for UTC-based customer
+metrics. The official MDFF v2.7 format clauses were inspected, but the
+applicable NMI Procedure, Metrology Procedure Part B, governing version for
+historical uploads, and source-specific meter/channel evidence remain
+unverified. See
+[`BASELINE_VERIFICATION.md`](BASELINE_VERIFICATION.md) for exact commands and
+outcomes, and
+[`backend/docs/stage1/PROMPT17_MIGRATION_COMPATIBILITY.md`](backend/docs/stage1/PROMPT17_MIGRATION_COMPATIBILITY.md)
+for acceptance statuses and implementation limitations.
+
+## Prompt 18 — tariff history, safe billing, and AER reference catalog
+
+Prompt 18 has implemented stable tariff identities with append-only,
+user-confirmed revision snapshots, explicit effective dates, and archive
+behavior. Existing mutable tariff rows were not treated as verified contracts
+and were not backfilled as confirmed history. Customer billing now reports
+unavailable or unpriced periods when tariff evidence is missing, does not use
+an implicit illustrative price, and discloses incomplete coverage and
+unsupported bill components. An explicitly requested scenario remains
+separate from customer billing.
+
+Recommendation and scheduling tariff consumers now resolve rates from
+confirmed revision snapshots. Scheduling blocks on missing coverage,
+overlapping revisions, or a revision boundary that its single-revision pricing
+contract cannot safely span. The existing synthetic TOU scheduling scenario
+remains covered by tests. Mobile tariff setup can browse generic reference
+plans without activating them or overwriting customer-confirmed terms.
+
+The AER adapter is read-only, uses the verified list/detail API versions and a
+versioned retailer URI snapshot, and does not persist provider plan payloads.
+Production exposure remains **blocked** pending verified rights for
+redistribution, attribution, retention, and caching. Public generic plans are
+not proof of a customer's contract. No complete household bill or validated
+Australian customer energy cost is claimed. Prompt 17B's independent NEM12
+direction and source-clock blockers also remain unresolved.
+
+Final validation for this milestone: **233 backend tests passed**; Prompt 18
+targeted Ruff checks and mobile `npx tsc --noEmit` passed; the tariff migration
+upgraded to head, downgraded to its parent, and re-upgraded on an isolated
+PostgreSQL 16 container. Repository-wide Ruff still reports findings outside
+the targeted Prompt 18 file set. No commit or push was made. See
+[`PROMPT18_ACCEPTANCE.md`](backend/docs/stage1/PROMPT18_ACCEPTANCE.md) for the
+acceptance table, commands, results, and remaining blockers.
+
+## Weather and grid context — Prompt 19
+
+Prompt 19 is **PARTIAL**. An authenticated Open-Meteo weather-context path is
+implemented using only the paid customer endpoint. The adapter validates and
+normalizes hourly weather fields, retains original and normalized units,
+records target and retrieval times separately, persists fetch runs and values,
+and reports fresh, stale, unavailable, malformed, unauthorized, and
+rate-limited outcomes. It requires `OPEN_METEO_API_KEY`; no free-endpoint
+fallback exists. The Expo dashboard accepts manually entered approximate
+coordinates and displays forecast freshness, Melbourne-local update times,
+provider attribution, and provider-unavailable states.
+
+The selected Open-Meteo response does not provide an authoritative forecast
+issue/run timestamp or identify the resolved model behind `best_match`.
+`forecast_issued_at` therefore remains null. Persisted forecasts must not be
+treated as historical decision-time inputs. A paid key/account was not
+available for a live smoke test. Cache TTL is configurable and defaults to
+one hour; this is a GridSense policy, not a provider guarantee. No automated
+retention purge or background polling is configured; a production retention
+policy remains to be approved.
+
+AEMO market price and demand integration is **BLOCKED**. The public DispatchIS
+directory was reachable, but AEMO market-data/NEMWeb documentation returned
+HTTP 403 and feed schema, VIC mapping, interval/revision semantics, units and
+data-use rights were not established. The API returns a blocked status with
+null market fields. No wholesale value is used as a retail tariff, bill input
+or savings claim.
+
+See
+[`PROMPT19_ACCEPTANCE.md`](backend/docs/stage1/PROMPT19_ACCEPTANCE.md) and
+[`EXTERNAL_PROVIDER_SOURCE_MATRIX.md`](backend/docs/stage1/EXTERNAL_PROVIDER_SOURCE_MATRIX.md)
+for the source evidence, acceptance matrix, validation commands and remaining
+limitations. Prompt 17B NEM12 direction/time blockers and Prompt 18 tariff
+evidence limitations remain unchanged. No commit or push was made.
+
+## Evidence-backed recommendations and insights — Prompt 20
+
+Prompt 20 is **PARTIAL**. Recommendation generation now gates pattern findings
+on seven fully covered completed local days, classified direction, verified
+time basis, and eligible provenance. Missing or partial history produces a
+data-quality action with no savings or consumption-reduction placeholder.
+Complete measured observations receive versioned response-time calculation
+evidence; synthetic/mixed evidence is marked illustrative. The evidence
+includes the meter owner, analysis dates, input digest and record count,
+coverage/eligibility checks, rule and method versions, assumptions,
+limitations, and one-hour expiry. It does not duplicate raw meter rows.
+
+The evidence is not persisted. It is regenerated on request, so new requests
+reflect corrected/deleted readings, but historical recommendations are not
+replayable and no durable immutable audit trail or expiry job exists. No
+database migration was added.
+
+Insights no longer insert the fixed `$0.20` tip or generic assumed TOU windows.
+The daily brief compares a complete measured day with four complete prior
+same-weekdays, never imputes a missing day as zero, and withholds forecast-based
+advice pending chronological held-out validation. Anomaly findings now require
+complete measured days; default-rate extra-cost estimates and appliance-specific
+causal suggestions were removed.
+
+Billing period changes are now emitted only for at least seven fully covered
+measured days in each period with matching weekday counts. Partial observed
+energy remains separately labeled with its coverage; change percentages,
+daily averages, and cost deltas are withheld when comparison eligibility or
+complete-bill requirements fail. Synthetic meter data is explicitly
+illustrative and cannot be presented as a customer estimate; an explicit
+scenario may show illustrative components but never a customer estimate.
+Existing confirmed-tariff billing and illustrative scenarios remain separate.
+
+The mobile recommendation view shows evidence status, coverage, provenance,
+eligibility checks, method, analysis window, expiry, assumptions, and
+limitations in a “How was this calculated?” detail. Expired evidence is
+withheld as a current opportunity. The bill comparison UI labels observed
+eligible imports and no longer describes lower usage as “improved” or as
+proof of energy-saving behavior. Chat receives no evidence object; its context
+is restricted to seven complete measured days and a post-generation guard
+replaces unsupported numeric financial claims and numeric kWh claims not
+present in that eligible context.
+
+Forecast evaluation, durable evidence storage, notification deduplication,
+and schedule-evidence integration remain incomplete. No weather or AEMO
+credentials were requested or configured, and no new provider integration was
+added. The complete validation record and remaining limitations are in
+[`PROMPT20_ACCEPTANCE.md`](backend/docs/stage1/PROMPT20_ACCEPTANCE.md).
+No commit or push was made.
+
+## Prompt 21 — advisory scheduling and forecast evidence
+
+The existing schedule preview now has an explicit baseline eligibility
+response. Synthetic profiles can be costed only as illustrative scenarios.
+A client-supplied `independently_measured` tag or measurement-method value is
+not accepted as evidence; measured scheduling is blocked until a
+server-validated separate submeter or synchronized disaggregation source
+exists. The endpoint now compares an exact preferred-start scenario, the
+existing deterministic greedy reference, and the existing MILP candidate
+under the same tariff, profile, tasks, horizon, and limits. Preference and
+omission penalties remain separate AUD objective terms.
+
+Scheduling responses extend the existing calculation-evidence object with
+input/task digests, tariff revision/effective dates, baseline classification,
+formula inputs, scenario values, owner/meter, assumptions, limitations, and a
+one-hour expiry. The evidence is response-scoped and does not provide durable
+historical replay. The mobile scheduling view exposes local-time schedules,
+modeled cost differences, baseline status, tariff applicability, and a
+calculation-evidence disclosure. It remains preview-only and does not dispatch
+appliances.
+
+The existing chronological single-household France evaluation artifacts were
+reanalyzed. Prompt 21 adds best-baseline-relative MAE output. Prophet performs
+mixedly on the held-out horizons (+7.4% MAE vs best baseline at one day,
+-17.3% at seven days, and -29.9% at fourteen days); nominal 80% interval
+coverage is approximately 96%. No valid historical weather issue-time
+features are available, so forecast-dependent advice remains disabled.
+
+Prompt 21 is **PARTIAL**. The measured baseline pathway, durable evidence
+archive, full required scheduling/forecast test matrix, and product forecast
+acceptance criteria are not implemented. Prompt 20C's Windows SQLite native
+access violation remains **unresolved** and is an explicit release blocker.
+See [`PROMPT21_ACCEPTANCE.md`](backend/docs/stage1/PROMPT21_ACCEPTANCE.md) and
+[`PROMPT21_FORECAST_EVALUATION.md`](backend/docs/stage1/PROMPT21_FORECAST_EVALUATION.md).
+
+Validation update: targeted Prompt 21 regressions passed (56 tests), the
+Windows full suite passed 262 tests in each of three disposable-copy runs,
+and the Linux Docker run passed the same 262 tests. Windows native diagnostics
+were present in 2/3 full runs and in the focused run; Linux had none in its
+single run. Thus test correctness is promising but Windows stability is still
+**BLOCKED**.
+
+## Prompt 22 — Stage 1 end-to-end integration
+
+Prompt 22 improved the existing advisory journeys without adding an optimizer
+or asserting unsupported measured results:
+
+- Account changes clear user-scoped meter, usage and recommendation stores;
+  epoch checks prevent stale requests from repopulating them.
+- Approximate weather locations are keyed per user rather than shared across
+  accounts.
+- Scheduling supports the existing synthetic baseline, supported demand limits
+  and an explicitly unit-labelled AUD/interval preference penalty.
+- Billing presents a tariff-review action when a customer tariff is missing,
+  out of effective dates or incomplete.
+- Mobile API errors now display backend validation fields/messages rather than
+  a generic Axios status for structured 422 responses.
+- The authenticated vertical-slice test now checks cross-user denial,
+  unquantified recommendations, synthetic scheduling and unavailable-provider
+  states.
+
+Verification: focused backend tests **23 passed, 7 warnings**; Windows full
+suite **262 passed, 12 warnings, exit 0 with native SQLite access violation**;
+Linux Docker full suite **262 passed, 14 warnings, no native diagnostic in
+that run**; focused Ruff, mobile TypeScript and Expo web export **passed**.
+ESLint remains blocked by missing project configuration/executable. Browser
+tests verified registration, upload and conservative direction handling,
+useful unavailable states, advisory scheduling blocked by a missing tariff,
+provider-unavailable messaging, sign-out and second-account isolation.
+
+The Windows native SQLite diagnostic remains an explicit release blocker;
+pytest success is not a stability pass. Prompt 22 is **PARTIAL**. The project is
+eligible only for a controlled synthetic/advisory demonstration, not
+real-household decisions or production release. The measured scheduling
+baseline, verified direction semantics, customer tariff confirmation,
+durable evidence replay, forecast acceptance, external provider terms and
+production controls remain incomplete.
+
+See
+[`PROMPT22_ACCEPTANCE.md`](backend/docs/stage1/PROMPT22_ACCEPTANCE.md),
+[`STAGE1_END_TO_END_TEST_REPORT.md`](backend/docs/stage1/STAGE1_END_TO_END_TEST_REPORT.md),
+and
+[`STAGE1_RELEASE_READINESS.md`](backend/docs/stage1/STAGE1_RELEASE_READINESS.md).
+No files were staged, committed, pushed, reset, or discarded.
+
+## Prompt 23 — Engineering baseline and recovery
+
+Prompt 23 established a detailed source-preservation plan, added a
+hash-pinned Python 3.11 development lock, made the existing PostgreSQL
+migration downgrade portable, added Expo-compatible ESLint tooling, and
+extended CI to cover dependency hashes, migrations, native-diagnostic
+scanning, mobile lint/typecheck, and web export. A reproducible checkpoint
+proposal now identifies modified tracked source, 47 untracked implementation
+and acceptance paths, 601 generated Graphify files, five backend-root test
+artifacts, ignored developer data, and the continuous Alembic chain. No
+staging or commit occurred; task-scoped disposable validation artifacts were
+cleaned without changing pre-existing data.
+
+The worker-health smoke found and fixed two concrete RQ integration defects:
+the health route imported `get_redis_conn` from the wrong module and treated
+`Queue.workers` as available in RQ 2.11. It now reuses
+`app.tasks.get_redis_conn`, obtains workers through `Worker.all`, and returns
+503 when Redis is reachable but no worker is registered. Focused tests cover
+available, absent, and unreachable states; a disposable Redis/RQ/TestClient
+check with an overridden test-user dependency returned one running worker.
+
+Validation: the clean locked Linux full suite passed **265 tests, 13
+warnings** with no native diagnostic. Three full Windows runs each passed
+**265 tests, 12 warnings**, but the native SQLite access-violation appeared
+in **2/3** runs. Therefore Windows stability remains **BLOCKED**. Full
+repository Ruff remains **FAIL** at 174 findings, and the existing CI
+backend-lint job uses that failing command. A clean mobile install, ESLint
+(0 errors, 18 warnings), TypeScript, and Expo web export passed. npm reported
+64 dependency advisories; no blanket audit fix was applied.
+
+Prompt 23 is **PARTIAL**. The project is still not stable or production
+validated. Prompt 24 is appropriate only as a bounded engineering-remediation
+effort: resolve the native-fault gate or document verified containment,
+address Ruff debt so CI can pass, then run the hosted workflow. Continue to
+limit demonstrations to explicitly synthetic/advisory scenarios.
+
+See [PROMPT23_ENGINEERING_BASELINE.md](PROMPT23_ENGINEERING_BASELINE.md) and
+[STAGE1_SOURCE_CHECKPOINT_PLAN.md](STAGE1_SOURCE_CHECKPOINT_PLAN.md) for the
+full evidence, classifications, exact source paths, exclusions, and proposed
+staging structure.
+
+## Historical Prompt 23A snapshot — superseded by Prompt 23B below
+
+The backend Ruff gate is now clean: `ruff check app tests` exits 0 after
+correction of the 174 findings recorded in Prompt 23. The four test modules
+that used fixed URI-style SQLite URLs now create per-test databases under
+pytest `tmp_path`, dispose their engines, and restore FastAPI dependency
+overrides and limiter state. Their focused regression passed **23 tests**.
+A controlled Windows reproduction confirmed that the old URL form created a
+file in its working directory, so those tests were not safely isolated.
+
+The full backend assertion suite reports **265 passed** on Windows and Linux.
+That is not a cross-platform stability pass: the latest Windows run printed
+two native SQLite access-violation diagnostics while reporting exit code 0.
+The Linux disposable Docker run passed 265 tests without such a diagnostic;
+it does not resolve the Windows fault. Five pre-existing `backend/file*`
+artifacts were preserved. Since no hashes were recorded before earlier test
+execution with the old URLs, whether those artifact contents changed cannot
+be determined; no restore or deletion was attempted.
+
+At this historical SDK 54 point, npm reported **49 advisories overall** and
+**36 in the production dependency tree**, including **five high-severity**
+findings in `expo-router`, `query-string`, `decode-uri-component`,
+`image-size`, and `postcss`. These counts were superseded by the SDK 58
+same-lock audit recorded below: zero production advisories and 14 moderate
+development-tool advisories. The browser interaction was not verified at
+this historical point; Prompt 23B later verified the modal focus flow.
+
+PostgreSQL 16 migration-cycle, Redis/RQ, and authenticated smoke checks are
+carried forward from the Prompt 23 disposable-infrastructure evidence; they
+were not rerun here. Hosted GitHub Actions was not run. The index remains
+empty, the working tree remains dirty, and no source checkpoint, commit, or
+push was created.
+
+Prompt 23A was **PARTIAL / BLOCKED** at that historical snapshot. Prompt 23B
+has since verified the modal focus interaction and resolved the production-
+tree advisories, but Prompt 24 still should **not** begin: the Windows native
+fault remains unresolved, artifact preservation cannot be attested, moderate
+development-tool advisories remain, hosted CI was not run, and the complete
+source-only checkpoint has not been reproduced.
+Detailed evidence and defect dispositions are in
+[PROMPT23A_STABILIZATION_REPORT.md](PROMPT23A_STABILIZATION_REPORT.md) and
+[ENGINEERING_DEFECT_REGISTER.md](ENGINEERING_DEFECT_REGISTER.md).
+
+## Mobile dependency modernization follow-up
+
+The mobile app was upgraded to Expo SDK 58, including Expo Router 58, React
+Native 0.88.1, React 19.3, and TypeScript 6.0.3. The app config now uses the
+SDK-supported splash-screen plugin configuration. TypeScript 6 compatibility
+issues and new React lint findings were corrected rather than suppressed.
+
+Current mobile validation: `npm run lint`, `npm run typecheck`,
+`npx expo install --check`, `npx expo-doctor` (20/20), Expo public-config
+validation, and `npm run export:web` all pass. `npm audit --omit=dev` reports
+zero production advisories. The full audit still reports 14 moderate
+development-tool findings, all linked to the ESLint/TypeScript ESLint
+toolchain; `npm audit fix` without `--force` found no compatible update.
+Details and the compatibility rationale for not applying a blanket minimatch
+major override are in D23A-006 of
+[ENGINEERING_DEFECT_REGISTER.md](ENGINEERING_DEFECT_REGISTER.md).
+
+Prompt 23B subsequently tested the Automation screen using a disposable
+migrated SQLite backend and test account. The modal's focus lifecycle was
+verified in the browser: focus enters the form, Tab remains in the dialog,
+Escape closes it, and both Escape and the close control return focus to the
+trigger. No `aria-hidden` warning or page error was observed. This is a
+verified interaction, not a complete accessibility audit.
+
+The current engineering disposition remains **PARTIAL / BLOCKED**. Seven
+full Windows child-process test runs each reported 265 passing tests, but
+four emitted six native SQLite access-violation diagnostics. Three locked
+Linux runs passed without native diagnostics, but do not resolve the Windows
+fault. SDK 58's recorded same-lock audit shows zero production advisories and
+14 moderate development-tool advisories; the audit was not freshly rerun
+during Prompt 23B reporting. PostgreSQL/Redis gates were not rerun, hosted
+GitHub Actions was not executed, and the full source-only checkpoint has not
+been built from a clean checkout. Prompt 24 should not begin.
+
+## Prompt 23B engineering status
+
+The backend native diagnostic harness is
+[run_native_pytest.py](backend/scripts/run_native_pytest.py). It preserves
+child-process output and records environment metadata, test collection
+fingerprint, active test marker, native diagnostic detection, and a
+machine-readable result. The seven-run Windows sample is a failed stability
+sample; a zero pytest exit status is not treated as success when native fault
+output exists. No backend lifecycle fix was justified by the evidence.
+
+Current gates:
+
+| Gate | Status |
+|---|---|
+| Backend Ruff | **PASS** — full `ruff check app tests` recorded clean. |
+| Windows backend assertions | **PASS, stability BLOCKED** — 265 assertions pass in each run, but native diagnostics occur intermittently. |
+| Locked Linux backend suite | **PASS — scoped** — three runs, 265 passed each, no native diagnostics. |
+| Mobile lint / TypeScript / Expo Doctor / web export | **PASS** — SDK 58 checks recorded clean after the accessibility change. |
+| Mobile modal browser behavior | **PASS — tested interaction** — Escape and close-control focus restoration verified. |
+| Production npm dependency tree | **PASS — prior same-lock audit** — zero advisories recorded. |
+| Development npm dependency tree | **PARTIAL** — 14 moderate advisories recorded; not freshly audited in Prompt 23B. |
+| PostgreSQL / Redis / full migrated API smoke | **PARTIAL / NOT FRESHLY VERIFIED** — prior Prompt 23 evidence only. |
+| Hosted CI | **BLOCKED / NOT RUN**. |
+| Source-only clean-checkout reproduction | **PARTIAL** — sanitized backend copy tested; complete checkpoint not reproduced from clean checkout. |
+
+The detailed evidence, risk disposition, experiment matrix, checkpoint list,
+and Prompt 24 decision are in
+[PROMPT23B_NATIVE_STABILITY_REPORT.md](PROMPT23B_NATIVE_STABILITY_REPORT.md).
+The current file inventory and exclusions are in
+[STAGE1_SOURCE_CHECKPOINT_PLAN.md](STAGE1_SOURCE_CHECKPOINT_PLAN.md). No
+developer databases, `.env` files, old artifacts, or generated output were
+staged or removed. No commit or push was performed.
+
+## Prompt 23C lifecycle follow-up — 2 November 2026
+
+The Prompt 23C report is
+[PROMPT23C_LIFECYCLE_INVESTIGATION.md](backend/docs/stage1/PROMPT23C_LIFECYCLE_INVESTIGATION.md).
+It adds an opt-in SQLAlchemy/FastAPI lifecycle plugin and a precise pytest
+collection fingerprint to the native diagnostic harness. In a controlled
+25-test A/B experiment, the scheduling fixture's expired, still-attached
+`User` object caused 32 SQL cursor operations per baseline run to execute on
+a thread different from the active SQLite connection checkout thread. Three
+runs with the fixture user refreshed and detached recorded zero such
+mismatches. The original fixture now asserts `object_session(user) is None`.
+This verifies the test-session ownership correction, **not** the root cause
+of the historical Windows access violation.
+
+Fresh results: full backend Ruff passed; the scheduling contract passed 20
+tests; the instrumented anomaly-plus-scheduling selection passed 25 tests
+without native diagnostics or lifecycle leaks; mobile lint, TypeScript, Expo
+Doctor, and isolated web export passed. The npm audit remains 14 moderate
+development-tool findings with a clean production-only audit. Disposable
+PostgreSQL 16 migration upgrade/downgrade/re-upgrade, Redis 7 health, an RQ
+`SimpleWorker` task, and a migrated SQLite register/login/authenticated API
+journey passed.
+
+The full Windows suite was not repeated for stability acceptance, the
+integrated browser tool could not connect for a new modal interaction, hosted
+GitHub Actions was not run, and the complete 161-path source candidate set
+was not reproduced from a clean Git clone. The seven-run historical Windows
+sample still includes native diagnostics in four runs. Therefore the
+engineering stabilization status remains **PARTIAL / BLOCKED**, and
+**Prompt 24 should not begin**. The fresh source inventory and exact candidate
+paths are recorded in
+[STAGE1_SOURCE_CHECKPOINT_PLAN.md](STAGE1_SOURCE_CHECKPOINT_PLAN.md); nothing
+was staged, committed, pushed, reset, or deleted.
+
+## Prompt 23D full-suite comparison — 2 November 2026
+
+The original-versus-corrected scheduling-fixture comparison is documented in
+[PROMPT23D_FULL_SUITE_COMPARISON.md](backend/docs/stage1/PROMPT23D_FULL_SUITE_COMPARISON.md).
+The two fixture copies differed only by the Prompt 23C refresh, expunge, and
+detached-principal assertion. Five independent full-suite processes per arm
+used CPython 3.11.9, SQLite 3.45.1, the same backend lock, fd capture, and
+the identical 265-test fingerprint. The baseline had 0/5 native diagnostics;
+the corrected fixture had 4/5. Four corrected processes completed all 265
+tests; one stopped after 263 passes because a concurrent marker-file
+replacement in the diagnostic harness raised `PermissionError`. The harness
+was fixed to avoid replacing the active-test marker and was exercised in a
+subsequent clean-copy full-suite run (265 passed, no native diagnostic).
+Neither that clean sample nor the comparison establishes Windows stability.
+
+Three corrected-run faulthandler stacks correlated the access violation
+with SQLAlchemy's SQLite reflection during scheduling-fixture `drop_all()`.
+The 23-test lifecycle-instrumented A/B pair did not reproduce the fault:
+both had zero cross-thread connection operations, concurrent same-connection
+operations, and teardown leaks. The existing detached-principal correction
+is retained as a valid test-ownership invariant, but it is not represented
+as the native fault's root-cause fix. The search of all auth overrides found
+no additional confirmed ORM ownership violation.
+
+The source-only copy passed full backend Ruff and all 265 backend tests,
+SQLite migration upgrade/downgrade/re-upgrade, `npm ci`, mobile lint and
+TypeScript, Expo Doctor (20/20), and web export. Its fresh full npm audit
+reported 14 moderate development-tool advisories, including an unfixed
+minimatch globparts-amplification DoS; `npm audit --omit=dev` reported zero.
+The Automation accessibility change remains in the source; browser
+interaction was not repeated in this pass.
+
+Workflow review found no explicit `permissions:` declaration, movable
+third-party action tags (including Trivy `@master`), and an unpinned,
+non-gating security-scan install path. The effective token scope depends on
+repository settings and was not verified. Hosted Actions remains
+**NOT VERIFIED**. At the latest inventory, 106 tracked paths are modified
+and 56 untracked source/documentation candidates remain, alongside 615
+generated Graphify paths and five preserved legacy artifacts. No source was
+staged, committed, pushed, reset, cleaned, or deleted. Overall status is
+**PARTIAL / BLOCKED**; **Prompt 24 should not begin**.
+
+## Prompt 23E final closure status (current round)
+
+| Area | Status |
+|---|---|
+| Release security gate (`backend/scripts/security_gate.py`) | Tested (34 policy tests). Exit 1 on the 9 unaccepted ChromaDB findings. Intended. |
+| ChromaDB x4 advisories | PROPOSED RISK ACCEPTANCE (owner pending; review 2026-12-31). Not approved. |
+| Trivy scanning of `requirements-dev.lock` | Recognised 158/158 pins via staged, SHA256-checked copy. |
+| Gitleaks | Exit 0 on the clean copy via `.gitleaksignore` (10 synthetic JWT fingerprints). Negative controls detected. |
+| actionlint | Exit 0 (ShellCheck corrections applied). |
+| Backend tests, restricted PostgreSQL 16 | 389 passed, 0 skipped. |
+| Ruff | Passes on project directories. |
+| Source manifest | 321 included / 706 excluded (see `STAGE1_SOURCE_CHECKPOINT_PLAN.md` section 0). |
+| Windows SQLite native fault | BLOCKED; explicitly unsupported. |
+| Hosted CI | NOT VERIFIED. |
+
+Older status tables below are historical and superseded where they conflict.
+
+## Prompt 23E status (historical)
+
+| Area | Status |
+|---|---|
+| Restricted PostgreSQL isolation | PASS (35/35, 3+3 runs, Windows and Linux) |
+| NEM12 source-time eligibility | FIXED (regression matrix, 85 targeted passed) |
+| Windows SQLite native fault | BLOCKED (recurred in full-3; clean-copy run 275 passed, exit 0) |
+| Full-suite hang | NOT REPRODUCED (5 bounded runs; historical evidence kept) |
+| pip-audit gate | BLOCKED (85 vulnerabilities, 15 packages) |
+| npm audit | 14 moderate dev-only (accepted residual risk); production 0 |
+| Mobile checks | PASS |
+| Alembic / Redis-RQ | PASS |
+| Hosted CI | NOT VERIFIED |
+
+Overall: **PARTIAL / BLOCKED**. Prompt 24 must not begin. No staging, commit, push, reset, or deletion was performed.
+
+## Security-remediation status (Prompt 23E-Security)
+
+- pip-audit: baseline 85 findings / 15 packages. Adopted lock: 5 findings, all chromadb with no upstream fix; gate passes only with 4 documented exceptions (owner unassigned).
+- python-jose replaced by PyJWT 2.15.1 (auth semantic change; awaiting user sign-off).
+- Backend suite on Windows and Linux: 320 passed, 24 skipped. Ruff clean.
+- Restricted PostgreSQL: 35/35 on Windows and Linux. Migrations and Redis/RQ verified.
+- Windows SQLite native fault: BLOCKED (recurred in 1 of 4 runs).
+- Hosted CI: NOT VERIFIED.
+- Mobile checks not rerun; the API contract did not change.
+- Overall: **PARTIAL / BLOCKED**.
+Developer container `gridsense-test-pg16-prompt23e` was preserved. The disposable container `gridsense-it-pg16-23e` is retained pending user instruction.
+
+## Prompt 23E-Security final sign-off
+
+| Area | Status |
+|---|---|
+| JWT (python-jose to PyJWT) | PROPOSED RISK ACCEPTANCE (sign-off pending) |
+| ChromaDB x4 advisories | PROPOSED RISK ACCEPTANCE (owner pending; review 2026-12-31 proposed) |
+| Backend Ruff and full suite (clean copy) | VERIFIED: 331 passed, 24 skipped; with PostgreSQL 355 passed, 0 skipped |
+| Windows SQLite native fault | BLOCKED; explicitly unsupported |
+| Hosted CI | NOT VERIFIED |
+
+Overall: **PARTIAL**. Prompt 24 must not begin. No staging, commit, push, or real database mutation was performed.

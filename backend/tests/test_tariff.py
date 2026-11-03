@@ -76,7 +76,7 @@ class TestSplitReadingsByPeriod:
             SimpleNamespace(timestamp=_dt(WED, 16), value=2.0),  # peak
             SimpleNamespace(timestamp=_dt(WED, 17), value=3.0),  # peak
             SimpleNamespace(timestamp=_dt(WED, 10), value=1.5),  # shoulder
-            SimpleNamespace(timestamp=_dt(WED, 3), value=0.5),   # off-peak
+            SimpleNamespace(timestamp=_dt(WED, 3), value=0.5),  # off-peak
             SimpleNamespace(timestamp=_dt(SAT, 16), value=4.0),  # weekend -> off-peak
         ]
         buckets = split_readings_by_period(readings)
@@ -133,16 +133,18 @@ class TestMarketTimeAndDst:
             for index in range(1, interval_count + 1)
         ]
         buckets = split_readings_by_period(readings, "VIC")
-        assert sum(reading.value for reading in readings) == pytest.approx(
-            sum(buckets.values())
-        )
+        assert sum(reading.value for reading in readings) == pytest.approx(sum(buckets.values()))
         return interval_count
 
     def test_tariff_boundaries_use_interval_start_in_local_time(self):
         # In winter, market 15:00 ends the 14:30-15:00 shoulder interval.
-        assert classify_interval_tou_period(datetime(2024, 6, 5, 15), 30, "VIC") is TouPeriod.SHOULDER
+        assert (
+            classify_interval_tou_period(datetime(2024, 6, 5, 15), 30, "VIC") is TouPeriod.SHOULDER
+        )
         # In summer, market 14:30 is 15:30 local; its 15:00 start is peak.
-        assert classify_interval_tou_period(datetime(2024, 1, 17, 14, 30), 30, "VIC") is TouPeriod.PEAK
+        assert (
+            classify_interval_tou_period(datetime(2024, 1, 17, 14, 30), 30, "VIC") is TouPeriod.PEAK
+        )
 
     @pytest.mark.parametrize(
         ("timestamp", "interval_minutes", "expected"),
@@ -152,12 +154,8 @@ class TestMarketTimeAndDst:
             (datetime(2024, 6, 5, 15, 5), 5, TouPeriod.PEAK),
         ],
     )
-    def test_subhour_intervals_classify_by_start(
-        self, timestamp, interval_minutes, expected
-    ):
-        assert classify_interval_tou_period(
-            timestamp, interval_minutes, "VIC"
-        ) is expected
+    def test_subhour_intervals_classify_by_start(self, timestamp, interval_minutes, expected):
+        assert classify_interval_tou_period(timestamp, interval_minutes, "VIC") is expected
 
     def test_unknown_state_is_not_silently_assigned_a_timezone(self):
         with pytest.raises(ValueError, match="cannot align local billing time"):

@@ -1,48 +1,53 @@
 """Tests for authentication endpoints."""
 
+from importlib import import_module
+
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
 from slowapi import Limiter
+from sqlalchemy import create_engine
+from sqlalchemy.engine import Engine
+from sqlalchemy.orm import Session, sessionmaker
 
-from app.main import app
 from app.database import get_db
+from app.main import app
 from app.models.base import Base
-from importlib import import_module
+
 import_module("app.models")
 
 
-# Test database setup - use shared in-memory DB so multiple connections see same data
-SQLALCHEMY_TEST_DATABASE_URL = "sqlite:///file:tests_db?mode=memory&cache=shared"
-engine = create_engine(
-    SQLALCHEMY_TEST_DATABASE_URL,
-    connect_args={"check_same_thread": False, "uri": True},
-)
-TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+engine: Engine
+testing_session_local: sessionmaker[Session]
 
 
 def override_get_db():
     """Override database dependency for tests."""
     try:
-        db = TestingSessionLocal()
+        db = testing_session_local()
         yield db
     finally:
         db.close()
 
 
 @pytest.fixture(autouse=True)
-def setup_database():
+def setup_database(tmp_path):
     """Create test database tables before each test."""
-    # Ensure models are imported and tables are created on the test engine
-    Base.metadata.create_all(bind=engine)
-    yield
-    Base.metadata.drop_all(bind=engine)
+    global engine, testing_session_local
+    engine = create_engine(f"sqlite:///{tmp_path / 'auth.sqlite3'}")
+    testing_session_local = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    try:
+        Base.metadata.create_all(bind=engine)
+        yield
+    finally:
+        Base.metadata.drop_all(bind=engine)
+        engine.dispose()
 
 
 @pytest.fixture
 def client():
     """Create test client with overridden database."""
+    previous_overrides = app.dependency_overrides.copy()
+    previous_limiter = app.state.limiter
     # Disable rate limiting for tests
     app.state.limiter = Limiter(key_func=lambda req: "test", default_limits=[])
 
@@ -57,9 +62,13 @@ def client():
                 app.dependency_overrides[candidate] = override_get_db
         except Exception:
             continue
-    with TestClient(app) as test_client:
-        yield test_client
-    app.dependency_overrides.clear()
+    try:
+        with TestClient(app) as test_client:
+            yield test_client
+    finally:
+        app.dependency_overrides.clear()
+        app.dependency_overrides.update(previous_overrides)
+        app.state.limiter = previous_limiter
 
 
 class TestRegistration:

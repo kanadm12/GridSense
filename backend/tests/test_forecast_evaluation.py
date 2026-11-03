@@ -127,3 +127,6 @@ def test_summary_has_one_overall_row_per_model_and_horizon():
     assert set(overall["model"]) == {"persistence", "prophet"}
     assert (overall["n_forecasts"] == 2).all()
     assert (overall["mae_kwh"] == 3.0).all()
+    prophet_row = overall.loc[overall["model"] == "prophet"].iloc[0]
+    assert prophet_row["best_baseline_model"] == "persistence"
+    assert prophet_row["mae_change_vs_best_baseline_percent"] == pytest.approx(0.0)

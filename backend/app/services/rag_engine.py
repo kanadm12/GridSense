@@ -1,8 +1,6 @@
 """RAG (Retrieval Augmented Generation) engine for energy knowledge base."""
 
 import os
-from pathlib import Path
-from typing import Any
 
 try:
     from langchain.text_splitter import RecursiveCharacterTextSplitter
@@ -70,7 +68,7 @@ Daily supply charges typically range from $1.00 to $1.50 per day.
 - Property value under $3 million
 - Must use an approved retailer
 
-## Solar Battery Rebate  
+## Solar Battery Rebate
 - Up to $2,950 rebate on battery storage
 - Must have solar panels installed
 - Interest-free loans available
@@ -152,10 +150,10 @@ class RAGEngine:
         """Lazily initialize the vector store."""
         if self._initialized:
             return True
-            
+
         if not HAS_LANGCHAIN:
             return False
-            
+
         api_key = os.getenv("OPENAI_API_KEY")
         if not api_key:
             return False
@@ -207,7 +205,7 @@ class RAGEngine:
         """Simple keyword-based fallback when RAG is unavailable."""
         query_lower = query.lower()
         sections = ENERGY_KNOWLEDGE_BASE.split("\n\n")
-        
+
         scored_sections = []
         for section in sections:
             section_lower = section.lower()
@@ -216,7 +214,7 @@ class RAGEngine:
             score = sum(1 for kw in keywords if kw in section_lower)
             if score > 0:
                 scored_sections.append((score, section.strip()))
-        
+
         # Sort by score and return top k
         scored_sections.sort(key=lambda x: x[0], reverse=True)
         return [section for _, section in scored_sections[:k]]
@@ -225,7 +223,7 @@ class RAGEngine:
         """Get tariff-specific context for cost calculations."""
         return """Victorian TOU Rates (typical):
 - Peak (3pm-9pm weekdays): ~38c/kWh
-- Shoulder (7am-3pm, 9pm-10pm weekdays): ~25c/kWh  
+- Shoulder (7am-3pm, 9pm-10pm weekdays): ~25c/kWh
 - Off-Peak (10pm-7am all days, weekends): ~18c/kWh
 - Daily supply charge: ~$1.20/day"""
 

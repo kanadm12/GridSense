@@ -14,7 +14,6 @@ from pathlib import Path
 
 import httpx
 
-
 DEFAULT_BASE_URL = os.getenv("GRID_SENSE_BASE_URL", "http://localhost:8000")
 
 
@@ -33,7 +32,9 @@ def _json_error(response: httpx.Response) -> str:
 
 def _assert_ok(response: httpx.Response, context: str) -> None:
     if response.is_error:
-        raise SmokeTestError(f"{context} failed with {response.status_code}: {_json_error(response)}")
+        raise SmokeTestError(
+            f"{context} failed with {response.status_code}: {_json_error(response)}"
+        )
 
 
 def register_user(client: httpx.Client, base_url: str, email: str | None = None) -> tuple[str, str]:
@@ -90,7 +91,9 @@ def get_nem12_date_range(path: Path) -> tuple[str, str] | None:
     return min(dates).isoformat(), max(dates).isoformat()
 
 
-def wait_for_upload_status(client: httpx.Client, base_url: str, token: str, upload_id: int, timeout_seconds: int = 90) -> dict:
+def wait_for_upload_status(
+    client: httpx.Client, base_url: str, token: str, upload_id: int, timeout_seconds: int = 90
+) -> dict:
     deadline = time.time() + timeout_seconds
     last_status = None
 
@@ -108,7 +111,9 @@ def wait_for_upload_status(client: httpx.Client, base_url: str, token: str, uplo
             raise SmokeTestError(f"Upload {upload_id} failed: {payload.get('errors') or payload}")
         time.sleep(2)
 
-    raise SmokeTestError(f"Upload {upload_id} did not complete within {timeout_seconds}s; last status={last_status}")
+    raise SmokeTestError(
+        f"Upload {upload_id} did not complete within {timeout_seconds}s; last status={last_status}"
+    )
 
 
 def wait_for_device_state(
@@ -131,7 +136,9 @@ def wait_for_device_state(
             return
         time.sleep(2)
 
-    raise SmokeTestError(f"Device {device_id} did not reach power={expected_power} within {timeout_seconds}s")
+    raise SmokeTestError(
+        f"Device {device_id} did not reach power={expected_power} within {timeout_seconds}s"
+    )
 
 
 def validate_authenticated_workflows(
@@ -145,7 +152,11 @@ def validate_authenticated_workflows(
 ) -> None:
     headers = _auth_headers(token)
 
-    usage_params = {key: value for key, value in {"start_date": start_date, "end_date": end_date}.items() if value}
+    usage_params = {
+        key: value
+        for key, value in {"start_date": start_date, "end_date": end_date}.items()
+        if value
+    }
     usage_response = client.get(
         f"{base_url}/api/v1/usage/summary/{meter_id}",
         params=usage_params,
@@ -155,7 +166,9 @@ def validate_authenticated_workflows(
     if usage_response.json().get("meter_id") != meter_id:
         raise SmokeTestError("Usage summary returned a different meter")
 
-    recommendations_response = client.get(f"{base_url}/api/v1/recommendations/{meter_id}", headers=headers)
+    recommendations_response = client.get(
+        f"{base_url}/api/v1/recommendations/{meter_id}", headers=headers
+    )
     _assert_ok(recommendations_response, "recommendations")
     if "recommendations" not in recommendations_response.json():
         raise SmokeTestError("Recommendations response was missing recommendations")
@@ -199,13 +212,17 @@ def validate_authenticated_workflows(
         if rule_id is None:
             raise SmokeTestError("Automation rule response was missing id")
 
-        run_response = client.post(f"{base_url}/api/v1/automation/rules/{rule_id}/run", headers=headers)
+        run_response = client.post(
+            f"{base_url}/api/v1/automation/rules/{rule_id}/run", headers=headers
+        )
         _assert_ok(run_response, "run automation rule")
         if run_response.json().get("status") != "queued":
             raise SmokeTestError("Automation rule was not queued")
         wait_for_device_state(client, base_url, token, int(device_id), "off", timeout_seconds)
     finally:
-        delete_response = client.delete(f"{base_url}/api/v1/automation/devices/{device_id}", headers=headers)
+        delete_response = client.delete(
+            f"{base_url}/api/v1/automation/devices/{device_id}", headers=headers
+        )
         _assert_ok(delete_response, "delete simulator device")
 
     welcome_response = client.get(f"{base_url}/api/v1/chat/welcome", headers=headers)
@@ -266,7 +283,9 @@ def run_smoke_test(base_url: str, sample_file: str | None = None, timeout_second
             upload_id = upload_payload.get("upload_id")
             if upload_id is None:
                 raise SmokeTestError(f"Upload response missing upload_id: {upload_payload}")
-            wait_for_upload_status(client, base_url, token, int(upload_id), timeout_seconds=timeout_seconds)
+            wait_for_upload_status(
+                client, base_url, token, int(upload_id), timeout_seconds=timeout_seconds
+            )
 
             meters_response = client.get(f"{base_url}/api/v1/meters", headers=_auth_headers(token))
             _assert_ok(meters_response, "list imported meters")

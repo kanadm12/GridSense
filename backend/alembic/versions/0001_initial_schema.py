@@ -6,7 +6,6 @@ Create Date: 2026-08-18
 """
 
 from alembic import op
-
 from app.models import Base
 
 revision = "0001_initial_schema"

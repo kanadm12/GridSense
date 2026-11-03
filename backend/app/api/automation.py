@@ -1,44 +1,48 @@
 """Home automation API endpoints."""
 
-from datetime import datetime, timedelta
-from typing import Any
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
-from app.rate_limit import limiter
 from app.api.ownership import (
     verify_device_ownership,
     verify_rule_ownership,
     verify_schedule_ownership,
 )
+from app.config import get_settings
 from app.database import get_db
 from app.models.automation import (
-    SmartDevice as SmartDeviceModel,
     Automation as AutomationModel,
-    DeviceSchedule as DeviceScheduleModel,
-    DeviceType,
+)
+from app.models.automation import (
     AutomationTrigger,
+    DeviceType,
+)
+from app.models.automation import (
+    DeviceSchedule as DeviceScheduleModel,
+)
+from app.models.automation import (
+    SmartDevice as SmartDeviceModel,
 )
 from app.models.user import User
-from app.config import get_settings
-from app.services.automation_provider import AutomationProviderError, get_automation_provider
+from app.rate_limit import limiter
 from app.schemas.automation import (
+    Automation,
+    AutomationCreate,
+    AutomationSuggestion,
+    AutomationUpdate,
+    DeviceCommand,
+    DeviceCommandResponse,
+    DeviceSchedule,
+    DeviceScheduleCreate,
+    GridSignal,
     SmartDevice,
     SmartDeviceCreate,
     SmartDeviceUpdate,
-    Automation,
-    AutomationCreate,
-    AutomationUpdate,
-    DeviceSchedule,
-    DeviceScheduleCreate,
-    DeviceScheduleUpdate,
-    AutomationSuggestion,
-    GridSignal,
-    DeviceCommand,
-    DeviceCommandResponse,
 )
+from app.services.automation_provider import AutomationProviderError, get_automation_provider
 
 router = APIRouter(prefix="/automation", tags=["Home Automation"])
 
@@ -187,10 +191,10 @@ async def get_automations(
         .join(SmartDeviceModel)
         .filter(SmartDeviceModel.user_id == current_user.id)
     )
-    
+
     if device_id:
         query = query.filter(AutomationModel.device_id == device_id)
-    
+
     return query.all()
 
 
@@ -202,7 +206,7 @@ async def create_automation(
 ) -> Automation:
     """Create a new automation rule."""
     # Verify device belongs to user
-    device = verify_device_ownership(db, automation.device_id, current_user.id)
+    verify_device_ownership(db, automation.device_id, current_user.id)
 
     # Validate trigger type
     try:
@@ -254,7 +258,7 @@ async def run_automation_rule(
     current_user: User = Depends(get_current_user),
 ) -> dict[str, str]:
     """Queue an authenticated manual execution of an automation rule."""
-    rule = verify_rule_ownership(db, rule_id, current_user.id)
+    verify_rule_ownership(db, rule_id, current_user.id)
     try:
         from app.tasks import enqueue_automation_rule
 
@@ -290,10 +294,10 @@ async def get_schedules(
         .join(SmartDeviceModel)
         .filter(SmartDeviceModel.user_id == current_user.id)
     )
-    
+
     if device_id:
         query = query.filter(DeviceScheduleModel.device_id == device_id)
-    
+
     return query.all()
 
 
@@ -305,7 +309,7 @@ async def create_schedule(
 ) -> DeviceSchedule:
     """Create a new device schedule."""
     # Verify device belongs to user
-    device = verify_device_ownership(db, schedule.device_id, current_user.id)
+    verify_device_ownership(db, schedule.device_id, current_user.id)
 
     db_schedule = DeviceScheduleModel(
         device_id=schedule.device_id,

@@ -2,7 +2,7 @@
 
 import copy
 import json
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -10,15 +10,15 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
+from sqlalchemy.engine import URL
+from sqlalchemy.orm import object_session, sessionmaker
 
 from app.api.deps import get_current_user
 from app.database import get_db
 from app.main import app
 from app.models.base import Base
 from app.models.meter import Meter
-from app.models.tariff import Tariff
+from app.models.tariff import Tariff, TariffRevision
 from app.models.user import User
 from app.schemas.scheduling import SchedulingRequestV1
 from app.services.scheduling_optimizer import interval_energy_rates_aud
@@ -27,12 +27,14 @@ FIXTURE_PATH = Path(__file__).parent / "fixtures" / "scheduling_v1.json"
 
 
 @pytest.fixture
-def scheduling_api():
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
+def scheduling_api(tmp_path):
+    database_url = URL.create(
+        "sqlite",
+        database=str(tmp_path / "scheduling.sqlite3"),
     )
+    # Separate file-backed connections prevent fixture and TestClient sessions
+    # from sharing StaticPool's single SQLite connection across threads.
+    engine = create_engine(database_url)
     Base.metadata.create_all(bind=engine)
     session_factory = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     db = session_factory()
@@ -48,15 +50,39 @@ def scheduling_api():
         tariff_type="flat",
         flat_rate_cents_kwh=28.0,
         is_preset=False,
+        effective_from=date(2020, 1, 1),
     )
     other_tariff = Tariff(
         user_id=other_user.id,
         tariff_type="flat",
         flat_rate_cents_kwh=28.0,
         is_preset=False,
+        effective_from=date(2020, 1, 1),
     )
     db.add_all([meter, other_meter, tariff, other_tariff])
+    db.flush()
+    db.add_all(
+        [
+            TariffRevision(
+                tariff_id=item.id,
+                revision_number=1,
+                source_type="user_entered",
+                confirmed_at=datetime.now(timezone.utc),
+                effective_from=date(2020, 1, 1),
+                tariff_type="flat",
+                flat_rate_cents_kwh=28.0,
+                daily_supply_charge_cents=100.0,
+                rates_include_gst=True,
+                unsupported_components=[],
+                is_illustrative=False,
+            )
+            for item in (tariff, other_tariff)
+        ]
+    )
     db.commit()
+    db.refresh(user)
+    db.expunge(user)
+    assert object_session(user) is None
     db.refresh(meter)
     db.refresh(other_meter)
     db.refresh(tariff)
@@ -87,8 +113,12 @@ def scheduling_api():
         app.dependency_overrides.clear()
         app.dependency_overrides.update(previous_overrides)
         db.close()
-        Base.metadata.drop_all(bind=engine)
-        engine.dispose()
+        try:
+            # Every request session must be returned before schema teardown.
+            assert engine.pool.checkedout() == 0, "connection leaked before drop_all"
+            Base.metadata.drop_all(bind=engine)
+        finally:
+            engine.dispose()
 
 
 def _request_payload() -> dict:
@@ -112,7 +142,18 @@ def test_scheduling_fixture_validates_and_openapi_exposes_v1(scheduling_api):
     expected_response = copy.deepcopy(fixture["response"])
     expected_response["meter_id"] = scheduling_api.meter.id
     expected_response["tariff"]["tariff_id"] = scheduling_api.tariff.id
-    assert response.json() == expected_response
+    response_body = response.json()
+    assert response_body["calculation_evidence"]["status"] == "illustrative"
+    assert response_body["calculation_evidence"]["owner_user_id"] == scheduling_api.user.id
+    assert response_body["calculation_evidence"]["meter_id"] == scheduling_api.meter.id
+    assert response_body["calculation_evidence"]["expires_at"] > response_body[
+        "calculation_evidence"
+    ]["created_at"]
+    assert response_body["calculation_evidence"]["task_set_digest_sha256"]
+    assert response_body["calculation_evidence"]["tariff_revision_ids"]
+    assert response_body["baseline_eligibility"]["eligible_for_costed_preview"] is True
+    response_body.pop("calculation_evidence")
+    assert response_body == expected_response
 
     openapi = app.openapi()
     endpoint = openapi["paths"]["/api/v1/scheduling/v1/plans/preview"]["post"]
@@ -124,7 +165,10 @@ def test_scheduling_fixture_validates_and_openapi_exposes_v1(scheduling_api):
         "/SchedulingRequestV1"
     )
     assert request_schema["examples"] == [fixture["request"]]
-    assert response_schema["examples"] == [fixture["response"]]
+    response_example = response_schema["examples"][0]
+    assert response_example["preferred_schedule"]["method"] == "preferred"
+    assert response_example["baseline_eligibility"]["status"] == "eligible_synthetic"
+    assert "calculation_evidence" in response_schema["properties"]
 
 
 @pytest.mark.parametrize(
@@ -181,7 +225,7 @@ def test_missing_tariff_is_explicitly_blocked(scheduling_api):
     payload = _request_payload()
     payload["meter_id"] = scheduling_api.meter.id
     payload["tariff_id"] = None
-    scheduling_api.db.delete(scheduling_api.tariff)
+    scheduling_api.tariff.archived_at = datetime.now(timezone.utc)
     scheduling_api.db.commit()
 
     response = _post_preview(scheduling_api.client, payload)
@@ -192,6 +236,44 @@ def test_missing_tariff_is_explicitly_blocked(scheduling_api):
     assert body["tariff"]["status"] == "missing"
     assert body.get("candidate_schedule") is None
     assert body.get("objective_breakdown") is None
+
+
+def test_user_declared_measured_baseline_is_not_treated_as_verified(scheduling_api):
+    payload = _request_payload()
+    payload["meter_id"] = scheduling_api.meter.id
+    payload["tariff_id"] = scheduling_api.tariff.id
+    payload["baseline_profile"].update(
+        source="independently_measured",
+        scenario_id=None,
+        measurement_method="submeter",
+    )
+
+    response = _post_preview(scheduling_api.client, payload)
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["status"] == "blocked"
+    assert body["baseline_eligibility"]["status"] == "unavailable"
+    assert body["baseline_eligibility"]["eligible_for_costed_preview"] is False
+    assert body.get("objective_breakdown") is None
+    assert body["calculation_evidence"]["status"] == "unavailable"
+    assert "user declaration" in body["blockers"][0]
+
+
+def test_scheduling_prices_from_revision_not_mutable_projection(scheduling_api):
+    payload = _request_payload()
+    payload["meter_id"] = scheduling_api.meter.id
+    payload["tariff_id"] = scheduling_api.tariff.id
+    scheduling_api.tariff.effective_from = None
+    scheduling_api.tariff.flat_rate_cents_kwh = None
+    scheduling_api.db.commit()
+
+    response = _post_preview(scheduling_api.client, payload)
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["tariff"]["status"] == "configured"
+    assert body["status"] == "feasible"
 
 
 def test_synthetic_tou_demo_uses_cheaper_start_and_reports_real_tradeoff(scheduling_api):
@@ -214,8 +296,7 @@ def test_synthetic_tou_demo_uses_cheaper_start_and_reports_real_tradeoff(schedul
         }
         for index in range(8)
     ]
-    scheduling_api.tariff.tariff_type = "tou"
-    scheduling_api.tariff.periods = [
+    tou_periods = [
         {
             "name": "Off-peak",
             "start_minute": 0,
@@ -245,6 +326,27 @@ def test_synthetic_tou_demo_uses_cheaper_start_and_reports_real_tradeoff(schedul
             "days": list(range(7)),
         },
     ]
+    previous_revision = (
+        scheduling_api.db.query(TariffRevision)
+        .filter(TariffRevision.tariff_id == scheduling_api.tariff.id)
+        .one()
+    )
+    previous_revision.effective_to = date(2026, 11, 2)
+    scheduling_api.db.add(
+        TariffRevision(
+            tariff_id=scheduling_api.tariff.id,
+            revision_number=2,
+            source_type="user_entered",
+            confirmed_at=datetime.now(timezone.utc),
+            effective_from=date(2026, 11, 3),
+            tariff_type="tou",
+            periods=tou_periods,
+            daily_supply_charge_cents=100.0,
+            rates_include_gst=True,
+            unsupported_components=[],
+            is_illustrative=False,
+        )
+    )
     scheduling_api.db.commit()
 
     response = _post_preview(scheduling_api.client, payload)
@@ -262,9 +364,18 @@ def test_synthetic_tou_demo_uses_cheaper_start_and_reports_real_tradeoff(schedul
     assert breakdown["preference_penalty_aud"] == pytest.approx(0.06)
     assert breakdown["total_objective_aud"] == pytest.approx(0.98)
     assert breakdown["reference_objective_aud"] == pytest.approx(0.98)
+    assert breakdown["preferred_energy_cost_aud"] == pytest.approx(1.28)
+    assert breakdown["milp_vs_preferred_energy_cost_delta_aud"] == pytest.approx(-0.36)
+    assert breakdown["greedy_vs_preferred_energy_cost_delta_aud"] == pytest.approx(-0.36)
 
+    revision = (
+        scheduling_api.db.query(TariffRevision)
+        .filter(TariffRevision.tariff_id == scheduling_api.tariff.id)
+        .order_by(TariffRevision.revision_number.desc())
+        .first()
+    )
     rates = interval_energy_rates_aud(
-        scheduling_api.tariff, SchedulingRequestV1.model_validate(payload), "VIC"
+        revision, SchedulingRequestV1.model_validate(payload), "VIC"
     )
     assert rates is not None
     preferred_task_charge = 2.4 * 0.5 * sum(rates[6:8])
@@ -288,8 +399,13 @@ def test_tariff_effective_dates_cover_the_full_baseline_cost_horizon(scheduling_
         }
         for index in range(21)
     ]
-    scheduling_api.tariff.effective_from = datetime(2026, 11, 3).date()
-    scheduling_api.tariff.effective_to = datetime(2026, 11, 3).date()
+    revision = (
+        scheduling_api.db.query(TariffRevision)
+        .filter(TariffRevision.tariff_id == scheduling_api.tariff.id)
+        .one()
+    )
+    revision.effective_from = datetime(2026, 11, 3).date()
+    revision.effective_to = datetime(2026, 11, 3).date()
     scheduling_api.db.commit()
 
     response = _post_preview(scheduling_api.client, payload)
@@ -297,6 +413,50 @@ def test_tariff_effective_dates_cover_the_full_baseline_cost_horizon(scheduling_
     assert response.status_code == 200, response.text
     assert response.json()["status"] == "blocked"
     assert response.json()["tariff"]["status"] == "outside_effective_dates"
+
+
+def test_scheduling_blocks_when_horizon_crosses_tariff_revision_boundary(scheduling_api):
+    payload = _request_payload()
+    payload["meter_id"] = scheduling_api.meter.id
+    payload["tariff_id"] = scheduling_api.tariff.id
+    baseline_start = datetime.fromisoformat("2026-11-02T23:30:00+11:00")
+    payload["baseline_profile"]["intervals"] = [
+        {
+            "interval_start": (baseline_start + timedelta(minutes=30 * index)).isoformat(),
+            "demand_kw": 0.8,
+        }
+        for index in range(52)
+    ]
+    previous_revision = (
+        scheduling_api.db.query(TariffRevision)
+        .filter(TariffRevision.tariff_id == scheduling_api.tariff.id)
+        .one()
+    )
+    previous_revision.effective_to = date(2026, 11, 2)
+    scheduling_api.db.add(
+        TariffRevision(
+            tariff_id=scheduling_api.tariff.id,
+            revision_number=2,
+            source_type="user_entered",
+            confirmed_at=datetime.now(timezone.utc),
+            effective_from=date(2026, 11, 3),
+            tariff_type="flat",
+            flat_rate_cents_kwh=28.0,
+            daily_supply_charge_cents=100.0,
+            rates_include_gst=True,
+            unsupported_components=[],
+            is_illustrative=False,
+        )
+    )
+    scheduling_api.db.commit()
+
+    response = _post_preview(scheduling_api.client, payload)
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["status"] == "blocked"
+    assert body["tariff"]["status"] == "missing"
+    assert any("revision boundary" in blocker for blocker in body["blockers"])
 
 
 def test_infeasible_power_limit_is_explicit_in_api_response(scheduling_api):
@@ -333,7 +493,7 @@ def test_foreign_meter_is_rejected(scheduling_api):
 
     response = _post_preview(scheduling_api.client, payload)
 
-    assert response.status_code == 403
+    assert response.status_code == 404
 
 
 def test_foreign_tariff_is_rejected(scheduling_api):
@@ -343,4 +503,5 @@ def test_foreign_tariff_is_rejected(scheduling_api):
 
     response = _post_preview(scheduling_api.client, payload)
 
-    assert response.status_code == 403
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Tariff not found"

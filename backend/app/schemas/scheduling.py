@@ -1,11 +1,13 @@
 """Versioned contract for appliance schedule previews."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from enum import Enum
 from typing import Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from app.schemas.recommendation import CalculationEvidence
 
 
 class SchedulingContractModel(BaseModel):
@@ -29,6 +31,14 @@ class SchedulingStatus(str, Enum):
     FEASIBLE = "feasible"
     INFEASIBLE = "infeasible"
     TIMEOUT = "timeout"
+
+
+class BaselineEligibilityStatus(str, Enum):
+    """Whether the baseline source can support a costed schedule preview."""
+
+    ELIGIBLE_SYNTHETIC = "eligible_synthetic"
+    ELIGIBLE_MEASURED = "eligible_measured"
+    UNAVAILABLE = "unavailable"
 
 
 class TariffResolutionStatus(str, Enum):
@@ -206,6 +216,9 @@ _SCHEDULING_RESPONSE_EXAMPLE = {
         "reference_preference_penalty_aud": 0.0,
         "reference_omission_penalty_aud": 0.0,
         "reference_objective_aud": 1.12,
+        "preferred_energy_cost_aud": 1.12,
+        "milp_vs_preferred_energy_cost_delta_aud": 0.0,
+        "greedy_vs_preferred_energy_cost_delta_aud": 0.0,
     },
     "candidate_schedule": {
         "status": "feasible",
@@ -238,6 +251,119 @@ _SCHEDULING_RESPONSE_EXAMPLE = {
         ],
         "total_energy_kwh": 4.0,
         "total_cost_aud": 1.12,
+    },
+    "preferred_schedule": {
+        "status": "feasible",
+        "method": "preferred",
+        "tasks": [
+            {
+                "task_id": "water-heater-1",
+                "start": "2026-11-03T08:30:00+11:00",
+                "end": "2026-11-03T09:30:00+11:00",
+                "power_kw": 2.4,
+                "energy_kwh": 2.4,
+                "omitted": False,
+            }
+        ],
+        "total_energy_kwh": 4.0,
+        "total_cost_aud": 1.12,
+    },
+    "baseline_eligibility": {
+        "status": "eligible_synthetic",
+        "source": "synthetic",
+        "eligible_for_costed_preview": True,
+        "explanation": (
+            "Synthetic non-task baseline is eligible for an illustrative scenario only; "
+            "it is not measured household demand."
+        ),
+    },
+    "calculation_evidence": {
+        "schema_version": "1.0",
+        "recommendation_id": "meter-42:schedule:demo-water-heater:v1",
+        "rule_id": "scheduling.preview",
+        "rule_version": "1.0",
+        "owner_user_id": 7,
+        "meter_id": 42,
+        "created_at": "2026-11-03T00:00:00Z",
+        "expires_at": "2026-11-03T01:00:00Z",
+        "status": "illustrative",
+        "analysis_start_date": "2026-11-03",
+        "analysis_end_date": "2026-11-03",
+        "input_references": [
+            "scheduling-input-set:sha256:example",
+            "scheduling-task-set:sha256:example",
+            "tariff-revision:17",
+        ],
+        "input_record_count": 5,
+        "input_digest_sha256": "example",
+        "provenance_counts": {"synthetic": 1},
+        "coverage": {
+            "expected_intervals": 0,
+            "eligible_intervals": 0,
+            "missing_intervals": 0,
+            "excluded_quality_intervals": 0,
+            "unresolved_direction_intervals": 0,
+            "legacy_direction_unverified_intervals": 0,
+            "unresolved_time_basis_intervals": 0,
+            "duplicate_intervals": 0,
+            "invalid_intervals": 0,
+            "coverage_fraction": 0,
+            "coverage_status": "unavailable",
+            "provenance_status": "synthetic",
+        },
+        "eligibility_checks": {
+            "non_task_baseline": "pass",
+            "confirmed_tariff_revision": "pass",
+            "task_constraints_validated": "pass",
+            "meter_ownership": "pass",
+        },
+        "tariff_revision_id": 17,
+        "baseline_scenario": "synthetic",
+        "proposed_scenario": "MILP candidate compared with preferred and deterministic greedy",
+        "calculation_method_version": "scheduling_optimizer:1.0",
+        "calculated_values": {
+            "baseline_energy_cost_aud": 0.448,
+            "milp_energy_cost_aud": 1.12,
+            "greedy_energy_cost_aud": 1.12,
+            "preferred_energy_cost_aud": 1.12,
+            "milp_vs_greedy_energy_cost_delta_aud": 0,
+            "milp_vs_preferred_energy_cost_delta_aud": 0,
+        },
+        "value_units": {
+            "baseline_energy_cost_aud": "AUD",
+            "milp_energy_cost_aud": "AUD",
+            "greedy_energy_cost_aud": "AUD",
+            "preferred_energy_cost_aud": "AUD",
+            "milp_vs_greedy_energy_cost_delta_aud": "AUD",
+            "milp_vs_preferred_energy_cost_delta_aud": "AUD",
+        },
+        "energy_difference_kwh": 0,
+        "financial_difference_aud": 0,
+        "task_set_digest_sha256": "example",
+        "tariff_revision_ids": [17],
+        "tariff_effective_from": "2026-01-01",
+        "tariff_effective_to": None,
+        "baseline_source_classification": "eligible_synthetic",
+        "formulas": {
+            "baseline_energy_cost_aud": (
+                "sum(baseline_kw * interval_hours * interval_rate_aud_per_kwh)"
+            ),
+            "scenario_energy_charge_aud": "baseline_energy_cost_aud + task_energy_charge_aud",
+        },
+        "formula_inputs": {
+            "interval_minutes": 30,
+            "preference_penalty_aud_per_interval": 0.01,
+            "baseline_energy_kwh": 1.6,
+        },
+        "scenario_values": {
+            "preferred": {"energy_charge_aud": 1.12},
+            "greedy": {"energy_charge_aud": 1.12},
+            "milp": {"energy_charge_aud": 1.12},
+        },
+        "rounding_rule": "Optimizer values retain six decimal places; display rounds to two.",
+        "assumptions": ["Synthetic illustrative scenario; task execution is not implied."],
+        "limitations": ["Not a household bill or savings estimate."],
+        "invalidation_conditions": ["Recalculate if any input changes."],
     },
     "assumptions": [
         (
@@ -441,7 +567,7 @@ class ScheduleV1(SchedulingContractModel):
     """A candidate schedule or deterministic greedy reference result."""
 
     status: Literal["feasible", "not_found"]
-    method: Literal["milp", "deterministic_greedy"]
+    method: Literal["milp", "deterministic_greedy", "preferred"]
     reason: str | None = None
     tasks: list[ScheduledTaskV1]
     total_energy_kwh: float | None = Field(default=None, ge=0, allow_inf_nan=False)
@@ -462,6 +588,31 @@ class ObjectiveBreakdownV1(SchedulingContractModel):
     reference_preference_penalty_aud: float | None = None
     reference_omission_penalty_aud: float | None = None
     reference_objective_aud: float | None = None
+    preferred_energy_cost_aud: float | None = None
+    milp_vs_preferred_energy_cost_delta_aud: float | None = None
+    greedy_vs_preferred_energy_cost_delta_aud: float | None = None
+
+
+class BaselineEligibilityV1(SchedulingContractModel):
+    """Evidence-backed classification of the fixed non-task baseline."""
+
+    status: BaselineEligibilityStatus
+    source: BaselineSource
+    eligible_for_costed_preview: bool
+    explanation: str
+
+
+class SchedulingCalculationEvidence(CalculationEvidence):
+    """Scheduling-specific extension of the shared calculation evidence contract."""
+
+    task_set_digest_sha256: str
+    tariff_revision_ids: list[int] = Field(default_factory=list)
+    tariff_effective_from: date | None = None
+    tariff_effective_to: date | None = None
+    baseline_source_classification: str
+    formulas: dict[str, str] = Field(default_factory=dict)
+    formula_inputs: dict[str, float] = Field(default_factory=dict)
+    scenario_values: dict[str, dict[str, float | None]] = Field(default_factory=dict)
 
 
 class SchedulingResponseV1(SchedulingContractModel):
@@ -480,5 +631,8 @@ class SchedulingResponseV1(SchedulingContractModel):
     objective_breakdown: ObjectiveBreakdownV1 | None = None
     candidate_schedule: ScheduleV1 | None = None
     reference_schedule: ScheduleV1 | None = None
+    preferred_schedule: ScheduleV1 | None = None
+    baseline_eligibility: BaselineEligibilityV1
+    calculation_evidence: SchedulingCalculationEvidence
     assumptions: list[str]
     blockers: list[str]

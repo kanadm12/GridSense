@@ -54,7 +54,10 @@
       "total_objective_aud": 1.12,
       "reference_preference_penalty_aud": 0.0,
       "reference_omission_penalty_aud": 0.0,
-      "reference_objective_aud": 1.12
+      "reference_objective_aud": 1.12,
+      "preferred_energy_cost_aud": 1.12,
+      "milp_vs_preferred_energy_cost_delta_aud": 0.0,
+      "greedy_vs_preferred_energy_cost_delta_aud": 0.0
     },
     "candidate_schedule": {
       "status": "feasible",
@@ -87,6 +90,28 @@
       ],
       "total_energy_kwh": 4.0,
       "total_cost_aud": 1.12
+    },
+    "preferred_schedule": {
+      "status": "feasible",
+      "method": "preferred",
+      "tasks": [
+        {
+          "task_id": "water-heater-1",
+          "start": "2026-11-03T08:30:00+11:00",
+          "end": "2026-11-03T09:30:00+11:00",
+          "power_kw": 2.4,
+          "energy_kwh": 2.4,
+          "omitted": false
+        }
+      ],
+      "total_energy_kwh": 4.0,
+      "total_cost_aud": 1.12
+    },
+    "baseline_eligibility": {
+      "status": "eligible_synthetic",
+      "source": "synthetic",
+      "eligible_for_costed_preview": true,
+      "explanation": "Synthetic non-task baseline is eligible for an illustrative scenario only; it is not measured household demand."
     },
     "assumptions": [
       "The fixed baseline excludes scheduled tasks; its energy and cost are included exactly once.",

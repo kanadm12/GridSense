@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useCallback, useState, useRef } from 'react';
 import {
   View,
   Text,
@@ -7,13 +7,14 @@ import {
   Dimensions,
   FlatList,
   Linking,
-  ViewToken,
+  type ListViewToken,
 } from 'react-native';
 import { router } from 'expo-router';
 import { Colors, Spacing, BorderRadius, FontSize, FontWeight, Shadow } from '@/constants/theme';
 import { Ionicons } from '@expo/vector-icons';
 
 const { width } = Dimensions.get('window');
+const viewabilityConfig = { viewAreaCoveragePercentThreshold: 50 };
 
 interface Retailer {
   name: string;
@@ -71,13 +72,12 @@ export default function OnboardingScreen() {
   const [currentIndex, setCurrentIndex] = useState(0);
   const flatListRef = useRef<FlatList>(null);
 
-  const onViewableItemsChanged = useRef(({ viewableItems }: { viewableItems: ViewToken[] }) => {
-    if (viewableItems.length > 0 && viewableItems[0].index !== null) {
-      setCurrentIndex(viewableItems[0].index);
+  const onViewableItemsChanged = useCallback(({ viewableItems }: { viewableItems: ListViewToken[] }) => {
+    const firstVisibleItem = viewableItems[0];
+    if (firstVisibleItem?.index != null) {
+      setCurrentIndex(firstVisibleItem.index);
     }
-  }).current;
-
-  const viewabilityConfig = useRef({ viewAreaCoveragePercentThreshold: 50 }).current;
+  }, []);
 
   const goToNext = () => {
     if (currentIndex < STEPS.length - 1) {
@@ -119,7 +119,7 @@ export default function OnboardingScreen() {
             {RETAILERS.slice(0, 5).map(renderRetailerLink)}
           </View>
           <Text style={styles.retailersHint}>
-            Look for "Usage Data", "Smart Meter Data", or "NEM12 Export"
+            Look for &quot;Usage Data&quot;, &quot;Smart Meter Data&quot;, or &quot;NEM12 Export&quot;
           </Text>
         </View>
       )}

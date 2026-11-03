@@ -335,7 +335,25 @@ def summarize_predictions(predictions: pd.DataFrame) -> pd.DataFrame:
                     ),
                 }
             )
-    return pd.DataFrame(rows)
+    metrics = pd.DataFrame(rows)
+    baseline_keys = ["household", "phase", "season", "horizon_days"]
+    baseline_metrics = (
+        metrics.loc[metrics["model"].isin(["persistence", "weekday_mean_28d"])]
+        .sort_values("mae_kwh")
+        .drop_duplicates(baseline_keys)
+        .loc[:, baseline_keys + ["model", "mae_kwh"]]
+        .rename(
+            columns={
+                "model": "best_baseline_model",
+                "mae_kwh": "best_baseline_mae_kwh",
+            }
+        )
+    )
+    metrics = metrics.merge(baseline_metrics, on=baseline_keys, how="left", validate="many_to_one")
+    metrics["mae_change_vs_best_baseline_percent"] = (
+        (metrics["mae_kwh"] / metrics["best_baseline_mae_kwh"] - 1) * 100
+    )
+    return metrics
 
 
 def _sha256(path: Path) -> str:
@@ -425,8 +443,8 @@ def write_report(
         "## Test metrics",
         "",
         "| Model | Horizon | Forecasts | MAE (kWh) | RMSE (kWh) | "
-        "80% interval coverage | Mean interval width (kWh) |",
-        "|---|---:|---:|---:|---:|---:|---:|",
+        "80% interval coverage | Mean interval width (kWh) | MAE vs best baseline |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for _, row in test_overall.iterrows():
         coverage = (
@@ -442,7 +460,7 @@ def write_report(
         lines.append(
             f"| {row['model']} | {int(row['horizon_days'])} day(s) | "
             f"{int(row['n_forecasts'])} | {row['mae_kwh']:.3f} | {row['rmse_kwh']:.3f} | "
-            f"{coverage} | {width} |"
+            f"{coverage} | {width} | {row['mae_change_vs_best_baseline_percent']:+.1f}% |"
         )
     lines.extend(
         [
@@ -454,8 +472,14 @@ def write_report(
             "- The dataset has no verified PV/generation or NEM12 import/export classification; "
             "net demand and underlying load cannot be compared separately.",
             "- Forecast intervals are model-based uncertainty estimates, "
-            "not calibrated guarantees. "
+            "not calibrated guarantees; test coverage above the nominal 80% indicates "
+            "over-coverage in this sample, not proof of calibration. "
             "Baselines do not provide intervals.",
+            "- No weather feature was used. Historical provider issue-time evidence is absent; "
+            "future realized weather was not substituted as a past-issued forecast.",
+            "- Prophet is not enabled for product advice: its test MAE is worse than the best "
+            "baseline at the one-day horizon, and no deployment acceptance threshold has been "
+            "predeclared.",
             "- Seasonal subgroup estimates can have small sample counts; inspect `metrics.csv` "
             "before interpreting those rows.",
             "- No tariff is applied. These kWh metrics cannot support bill or savings claims.",
@@ -465,8 +489,8 @@ def write_report(
             "## Artifacts",
             "",
             "- `predictions.csv`: per-origin, per-horizon observed and forecast values.",
-            "- `metrics.csv`: MAE, RMSE, sample counts, and Prophet interval diagnostics by "
-            "household, phase, season, and horizon.",
+            "- `metrics.csv`: MAE, RMSE, sample counts, best-baseline identity and relative MAE "
+            "change, and Prophet interval diagnostics by household, phase, season, and horizon.",
             "- `config.json`: dataset digest, split dates, model setup, seeds, "
             "and package versions.",
             "- `forecast_evaluation.png`: test MAE by forecast horizon and model.",

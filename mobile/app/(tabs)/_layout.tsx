@@ -33,7 +33,7 @@ export default function TabLayout() {
         options={{
           title: 'Dashboard',
           tabBarIcon: ({ color, size }) => (
-            <Ionicons name="home" size={size} color={color} />
+            <Ionicons name="home" size={size} color={typeof color === 'number' ? Colors.primary : color ?? Colors.primary} />
           ),
         }}
       />
@@ -42,7 +42,7 @@ export default function TabLayout() {
         options={{
           title: 'Usage',
           tabBarIcon: ({ color, size }) => (
-            <Ionicons name="bar-chart" size={size} color={color} />
+            <Ionicons name="bar-chart" size={size} color={typeof color === 'number' ? Colors.primary : color ?? Colors.primary} />
           ),
         }}
       />
@@ -51,7 +51,7 @@ export default function TabLayout() {
         options={{
           title: 'Ask AI',
           tabBarIcon: ({ color, size }) => (
-            <Ionicons name="chatbubbles" size={size} color={color} />
+            <Ionicons name="chatbubbles" size={size} color={typeof color === 'number' ? Colors.primary : color ?? Colors.primary} />
           ),
         }}
       />
@@ -60,7 +60,7 @@ export default function TabLayout() {
         options={{
           title: 'Automation',
           tabBarIcon: ({ color, size }) => (
-            <Ionicons name="flash" size={size} color={color} />
+            <Ionicons name="flash" size={size} color={typeof color === 'number' ? Colors.primary : color ?? Colors.primary} />
           ),
         }}
       />
@@ -69,7 +69,7 @@ export default function TabLayout() {
         options={{
           title: 'Tips',
           tabBarIcon: ({ color, size }) => (
-            <Ionicons name="bulb" size={size} color={color} />
+            <Ionicons name="bulb" size={size} color={typeof color === 'number' ? Colors.primary : color ?? Colors.primary} />
           ),
         }}
       />
@@ -78,7 +78,7 @@ export default function TabLayout() {
         options={{
           title: 'Settings',
           tabBarIcon: ({ color, size }) => (
-            <Ionicons name="settings" size={size} color={color} />
+            <Ionicons name="settings" size={size} color={typeof color === 'number' ? Colors.primary : color ?? Colors.primary} />
           ),
         }}
       />

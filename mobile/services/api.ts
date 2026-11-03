@@ -2,7 +2,13 @@
  * API client for GridSense backend
  */
 
-import axios, { AxiosInstance, AxiosError, InternalAxiosRequestConfig } from 'axios';
+import axios, {
+  AxiosError,
+  AxiosInstance,
+  InternalAxiosRequestConfig,
+  create,
+  isAxiosError,
+} from 'axios';
 import * as SecureStore from 'expo-secure-store';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Constants from 'expo-constants';
@@ -61,6 +67,7 @@ export interface Meter {
   id: number;
   nmi: string;
   meter_serial: string | null;
+  mdm_data_stream_identifier?: string | null;
   suffix: string | null;
   unit_of_measure: string;
   interval_minutes: number;
@@ -95,16 +102,176 @@ export interface UserTariff {
   is_preset: boolean;
   demand_charge_dollars_kw: number | null;
   daily_supply_charge_cents: number;
+  revision_number: number | null;
+  confirmed_at: string | null;
+  confirmation_source: string | null;
+  is_confirmed: boolean;
+  unsupported_components: string[];
+}
+
+export interface TariffRevision {
+  id: number;
+  tariff_id: number;
+  revision_number: number;
+  source_type: string;
+  source_plan_id: string | null;
+  confirmed_at: string | null;
+  effective_from: string | null;
+  effective_to: string | null;
+  tariff_type: UserTariff['tariff_type'];
+  retailer_name: string | null;
+  flat_rate_cents_kwh: number | null;
+  peak_rate_cents_kwh: number | null;
+  off_peak_rate_cents_kwh: number | null;
+  shoulder_rate_cents_kwh: number | null;
+  feed_in_rate_cents_kwh: number | null;
+  periods: TariffPeriodV1[] | null;
+  rates_include_gst: boolean;
+  demand_charge_dollars_kw: number | null;
+  daily_supply_charge_cents: number | null;
+  unsupported_components: string[];
+  is_illustrative: boolean;
+  created_at: string;
+}
+
+export interface AERRetailer {
+  retailer: string;
+  brand: string;
+  base_uri: string;
+}
+
+export interface AERPlanSummary {
+  plan_id: string;
+  brand: string;
+  brand_name: string | null;
+  display_name: string;
+  plan_type: string | null;
+  fuel_type: string;
+  effective_from: string | null;
+  effective_to: string | null;
+  last_updated: string | null;
+  customer_type: string | null;
+  included_postcodes: string[];
+  distributors: string[];
+  requested_postcode: string;
+  source_api_version: number;
+  source_registry_version: string;
+  retrieved_at: string;
+  source_url: string;
+}
+
+export interface AERPlanDetail {
+  plan_id: string;
+  brand: string;
+  brand_name: string | null;
+  display_name: string | null;
+  effective_from: string | null;
+  effective_to: string | null;
+  last_updated: string | null;
+  source_api_version: number;
+  source_registry_version: string;
+  retrieved_at: string;
+  terms: Record<string, unknown>;
+  unsupported_components: string[];
+  requires_manual_user_review: boolean;
+  source_url: string;
+}
+
+export interface AERRetailerCatalog {
+  source: string;
+  document_version: string;
+  source_url: string;
+  source_last_updated: string;
+  retailers: AERRetailer[];
+}
+
+export interface ProviderFreshness {
+  provider: 'open_meteo' | 'aemo_nemweb' | string;
+  source_version: string;
+  status:
+    | 'valid'
+    | 'stale'
+    | 'unavailable'
+    | 'malformed'
+    | 'unauthorized'
+    | 'rate_limited'
+    | 'blocked';
+  configured: boolean;
+  retrieved_at: string | null;
+  fresh_until: string | null;
+  last_successful_fetch_at: string | null;
+  error_code: string | null;
+  retry_after: string | null;
+  attribution: string | null;
+  attribution_url: string | null;
+}
+
+export interface WeatherForecastHour {
+  source_time_label: string;
+  target_time_utc: string;
+  interval_start_utc: string | null;
+  interval_end_utc: string | null;
+  time_semantics: string;
+  interval_semantics_field: string | null;
+  temperature_2m: number | null;
+  apparent_temperature: number | null;
+  relative_humidity: number | null;
+  cloud_cover: number | null;
+  shortwave_radiation: number | null;
+  source_units: Record<string, string>;
+  normalized_units: Record<string, string>;
+}
+
+export interface WeatherForecastResponse {
+  provider: ProviderFreshness;
+  data_kind: 'forecast';
+  latitude: number | null;
+  longitude: number | null;
+  timezone: string;
+  forecast_issued_at: string | null;
+  issue_time_available: boolean;
+  model_selection: string | null;
+  provider_metadata: Record<string, unknown>;
+  hourly: WeatherForecastHour[];
+}
+
+export interface MarketContextResponse {
+  provider: ProviderFreshness;
+  region: string;
+  data_kind: 'observed' | 'forecast' | 'simulated';
+  price_aud_mwh: number | null;
+  demand_mw: number | null;
+  target_time_utc: string | null;
+  interval_start_utc: string | null;
+  interval_end_utc: string | null;
+  message: string;
 }
 
 export interface DailyUsage {
   date: string;
+  observed_eligible_kwh: number;
   total_kwh: number;
   peak_kwh: number;
   off_peak_kwh: number;
   shoulder_kwh: number;
   max_interval_kwh: number;
   estimated_cost: number | null;
+  expected_interval_count: number;
+  observed_interval_count: number;
+  eligible_interval_count: number;
+  missing_interval_count: number;
+  excluded_quality_count: number;
+  unresolved_direction_count: number;
+  legacy_direction_unverified_count: number;
+  duplicate_interval_count: number;
+  invalid_interval_count: number;
+  invalid_unit_count: number;
+  coverage_fraction: number;
+  coverage_status: string;
+  provenance_status: string;
+  observed_interval_average_demand_kw: number | null;
+  observed_interval_peak_demand_kw: number | null;
+  full_period_average_demand_kw: number | null;
 }
 
 export interface HourlyUsage {
@@ -119,6 +286,8 @@ export interface WeeklyUsage {
   day_name: string;
   avg_kwh: number;
   total_kwh: number;
+  complete_day_count: number;
+  coverage_status: string;
 }
 
 export interface UsageSummary {
@@ -129,14 +298,36 @@ export interface UsageSummary {
   end_date: string;
   days_count: number;
   total_kwh: number;
-  avg_daily_kwh: number;
-  max_daily_kwh: number;
-  min_daily_kwh: number;
-  peak_hour: number;
-  peak_avg_kwh: number;
-  off_peak_percentage: number;
+  avg_daily_kwh: number | null;
+  max_daily_kwh: number | null;
+  min_daily_kwh: number | null;
+  peak_hour: number | null;
+  peak_avg_kwh: number | null;
+  off_peak_percentage: number | null;
   estimated_total_cost: number | null;
   estimated_daily_cost: number | null;
+  eligible_import_kwh: number;
+  eligible_export_kwh: number;
+  net_grid_kwh: number | null;
+  expected_interval_count: number;
+  observed_interval_count: number;
+  eligible_interval_count: number;
+  missing_interval_count: number;
+  excluded_quality_count: number;
+  unresolved_direction_count: number;
+  legacy_direction_unverified_count: number;
+  duplicate_interval_count: number;
+  invalid_interval_count: number;
+  invalid_unit_count: number;
+  unresolved_time_basis_count: number;
+  coverage_fraction: number;
+  coverage_status: string;
+  provenance_status: string;
+  channel_classification_status: string;
+  explanation: string | null;
+  observed_interval_average_demand_kw: number | null;
+  observed_interval_peak_demand_kw: number | null;
+  full_period_average_demand_kw: number | null;
 }
 
 export interface Recommendation {
@@ -160,6 +351,60 @@ export interface Recommendation {
   uncertainty: string;
   confidence: 'low' | 'medium' | 'high';
   data_requirements: string[];
+  status:
+    | 'validated'
+    | 'estimated'
+    | 'illustrative'
+    | 'unquantified'
+    | 'unavailable'
+    | 'expired'
+    | 'no_supported_action';
+  calculation_evidence: CalculationEvidence | null;
+}
+
+export interface CalculationEvidence {
+  schema_version: '1.0';
+  recommendation_id: string;
+  rule_id: string;
+  rule_version: string;
+  owner_user_id: number;
+  meter_id: number;
+  created_at: string;
+  expires_at: string;
+  status: Recommendation['status'];
+  analysis_start_date: string | null;
+  analysis_end_date: string | null;
+  input_references: string[];
+  input_record_count: number;
+  input_digest_sha256: string | null;
+  provenance_counts: Record<string, number>;
+  coverage: {
+    expected_intervals: number;
+    eligible_intervals: number;
+    missing_intervals: number;
+    excluded_quality_intervals: number;
+    unresolved_direction_intervals: number;
+    legacy_direction_unverified_intervals: number;
+    unresolved_time_basis_intervals: number;
+    duplicate_intervals: number;
+    invalid_intervals: number;
+    coverage_fraction: number;
+    coverage_status: string;
+    provenance_status: string;
+  };
+  eligibility_checks: Record<string, string>;
+  tariff_revision_id: number | null;
+  baseline_scenario: string;
+  proposed_scenario: string;
+  calculation_method_version: string;
+  calculated_values: Record<string, number>;
+  value_units: Record<string, string>;
+  energy_difference_kwh: number | null;
+  financial_difference_aud: number | null;
+  rounding_rule: string;
+  assumptions: string[];
+  limitations: string[];
+  invalidation_conditions: string[];
 }
 
 export interface RecommendationsResponse {
@@ -252,7 +497,7 @@ export interface ScheduledTaskV1 {
 
 export interface ScheduleV1 {
   status: 'feasible' | 'not_found';
-  method: 'milp' | 'deterministic_greedy';
+  method: 'milp' | 'deterministic_greedy' | 'preferred';
   reason?: string | null;
   tasks: ScheduledTaskV1[];
   total_energy_kwh: number | null;
@@ -281,9 +526,29 @@ export interface SchedulingResponseV1 {
     reference_preference_penalty_aud?: number | null;
     reference_omission_penalty_aud?: number | null;
     reference_objective_aud?: number | null;
+    preferred_energy_cost_aud?: number | null;
+    milp_vs_preferred_energy_cost_delta_aud?: number | null;
+    greedy_vs_preferred_energy_cost_delta_aud?: number | null;
   } | null;
   candidate_schedule?: ScheduleV1 | null;
   reference_schedule?: ScheduleV1 | null;
+  preferred_schedule?: ScheduleV1 | null;
+  baseline_eligibility: {
+    status: 'eligible_synthetic' | 'eligible_measured' | 'unavailable';
+    source: 'synthetic' | 'independently_measured';
+    eligible_for_costed_preview: boolean;
+    explanation: string;
+  };
+  calculation_evidence: CalculationEvidence & {
+    task_set_digest_sha256: string;
+    tariff_revision_ids: number[];
+    tariff_effective_from: string | null;
+    tariff_effective_to: string | null;
+    baseline_source_classification: string;
+    formulas: Record<string, string>;
+    formula_inputs: Record<string, number>;
+    scenario_values: Record<string, Record<string, number | null>>;
+  };
   assumptions: string[];
   blockers: string[];
 }
@@ -324,16 +589,55 @@ export interface AuthResponse {
 }
 
 export interface ApiError {
-  detail: string;
+  detail?: unknown;
+  error?: unknown;
+  details?: unknown;
 }
+
+const extractApiErrorMessage = (payload: unknown): string | undefined => {
+  if (typeof payload !== 'object' || payload === null) return undefined;
+  const response = payload as Record<string, unknown>;
+  if (typeof response.detail === 'string') return response.detail;
+
+  const summary = typeof response.error === 'string' ? response.error : undefined;
+  const entries = Array.isArray(response.details)
+    ? response.details
+    : Array.isArray(response.detail)
+      ? response.detail
+      : [];
+  const messages = entries.flatMap((entry) => {
+    if (typeof entry !== 'object' || entry === null) return [];
+    const detail = entry as Record<string, unknown>;
+    const message =
+      typeof detail.message === 'string'
+        ? detail.message
+        : typeof detail.msg === 'string'
+          ? detail.msg
+          : null;
+    if (!message) return [];
+
+    const field =
+      typeof detail.field === 'string'
+        ? detail.field
+        : Array.isArray(detail.loc)
+          ? detail.loc.map(String).join('.')
+          : null;
+    return [field ? `${field}: ${message}` : message];
+  });
+
+  if (messages.length > 0) {
+    return summary ? `${summary}: ${messages.join('; ')}` : messages.join('; ');
+  }
+  return summary;
+};
 
 /**
  * Helper to extract error message from Axios errors
  */
 export const getErrorMessage = (error: unknown): string => {
-  if (axios.isAxiosError(error)) {
-    const axiosError = error as AxiosError<ApiError>;
-    return axiosError.response?.data?.detail || axiosError.message || 'An error occurred';
+  if (isAxiosError(error)) {
+    const responseMessage = extractApiErrorMessage(error.response?.data);
+    return responseMessage || error.message || 'An error occurred';
   }
   if (error instanceof Error) {
     return error.message;
@@ -343,10 +647,10 @@ export const getErrorMessage = (error: unknown): string => {
 
 // Track if we're currently refreshing to avoid multiple refresh attempts
 let isRefreshing = false;
-let failedQueue: Array<{
+let failedQueue: {
   resolve: (token: string) => void;
   reject: (error: unknown) => void;
-}> = [];
+}[] = [];
 let authExpiredHandler: (() => void) | null = null;
 
 export const setAuthExpiredHandler = (handler: (() => void) | null) => {
@@ -365,7 +669,7 @@ const processQueue = (error: unknown, token: string | null = null) => {
 };
 
 // Create axios instance
-const api: AxiosInstance = axios.create({
+const api: AxiosInstance = create({
   baseURL: API_URL,
   timeout: 30000,
   headers: {
@@ -539,6 +843,56 @@ export const tariffsApi = {
     const response = await api.get<UserTariff | null>('/tariffs');
     return response.data;
   },
+  getRevisions: async () => {
+    const response = await api.get<TariffRevision[]>('/tariffs/revisions');
+    return response.data;
+  },
+  getAERRetailers: async () => {
+    const response = await api.get<AERRetailerCatalog>('/tariffs/catalog/aer/retailers');
+    return response.data;
+  },
+  searchAERPlans: async (brand: string, postcode: string) => {
+    const response = await api.get<{
+      source: string;
+      source_registry_version: string;
+      retrieved_at: string;
+      plans: AERPlanSummary[];
+    }>('/tariffs/catalog/aer/plans', { params: { brand, postcode } });
+    return response.data;
+  },
+  getAERPlanDetail: async (brand: string, planId: string) => {
+    const response = await api.get<AERPlanDetail>(
+      `/tariffs/catalog/aer/plans/${encodeURIComponent(planId)}`,
+      { params: { brand } },
+    );
+    return response.data;
+  },
+};
+
+export const contextApi = {
+  getWeatherSummary: async (latitude: number, longitude: number) => {
+    const response = await api.post<WeatherForecastResponse>('/context/weather/summary', {
+      latitude,
+      longitude,
+    });
+    return response.data;
+  },
+  getWeatherHourly: async (latitude: number, longitude: number, hours = 24) => {
+    const response = await api.post<WeatherForecastResponse>('/context/weather/hourly', {
+      latitude,
+      longitude,
+      hours,
+    });
+    return response.data;
+  },
+  getMarketSummary: async () => {
+    const response = await api.get<MarketContextResponse>('/context/market/summary');
+    return response.data;
+  },
+  getProviderAvailability: async () => {
+    const response = await api.get<{ providers: ProviderFreshness[] }>('/context/providers');
+    return response.data;
+  },
 };
 
 // Upload API
@@ -552,7 +906,7 @@ export const uploadApi = {
       // { uri, name, type } object (the React Native convention) would stringify
       // to "[object Object]" and the server would reject it with HTTP 422.
       const blob = await (await fetch(fileUri)).blob();
-      formData.append('file', blob, fileName);
+      formData.append('file', new File([blob], fileName, { type: blob.type }));
 
       // Setting Content-Type to undefined lets the browser generate the correct
       // `multipart/form-data; boundary=...` header. Our axios instance defaults
