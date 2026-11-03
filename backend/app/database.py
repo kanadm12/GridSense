@@ -26,18 +26,11 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
 def get_db() -> Generator[Session, None, None]:
-    """Dependency that provides a database session."""
-    db = SessionLocal()
-    # Ensure tables exist for the bound engine (helps in-memory SQLite used in tests)
-    try:
-        from app.models import Base  # noqa: E402
+    """Dependency that provides a database session.
 
-        bind = db.get_bind()
-        if bind is not None:
-            Base.metadata.create_all(bind=bind)
-    except Exception:
-        # If models can't be imported or creation fails, continue and let callers handle errors
-        pass
+    Schema is managed exclusively by Alembic migrations; requests never issue DDL.
+    """
+    db = SessionLocal()
     try:
         yield db
     finally:

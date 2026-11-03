@@ -3,6 +3,21 @@
 **Run date:** 31 October 2026 | **Scope:** Prompt 01 in `GridSense_Detailed_Implementation_Prompts.md`
 **Purpose:** Record the current reproducible baseline and blockers before feature implementation.
 
+## 0. Final closure status (Prompt 23E-Security, current round)
+
+| Gate | Result |
+|---|---|
+| Backend suite, restricted PostgreSQL 16 | 389 passed, 0 skipped, exit 0 |
+| Ruff 0.16.3 (`alembic app scripts tests`) | Passed |
+| actionlint 1.7.7 with ShellCheck | Exit 0 |
+| Gitleaks (clean copy, `.gitleaksignore`) | Exit 0; negative controls exit 1 |
+| Security gate | Exit 1 (9 unaccepted ChromaDB findings; intended) |
+| Source manifest | 321 included / 706 excluded |
+| Hosted CI | NOT VERIFIED |
+| Windows SQLite native fault | BLOCKED; unsupported |
+
+Figures in sections 2 onward are the original Prompt 01 baseline and are kept for history.
+
 ## 1. Observed environment
 
 | Tool/runtime | Observed version/state | Notes |
@@ -435,6 +450,58 @@ new live captures were not saved or that only focused backend tests had run.
 | Browser fixture + analytics | Upload `backend/tests/sample_nem12.csv`, select the seeded analytics meter | **PASS.** The fixture reported 336 imported readings and unresolved direction for E1; dashboard retained **Synthetic demo meter**, showed 12.96 kWh for one local day (13.0 rounded), and its lower bill-comparison card showed a $3.89 partial configured-tariff estimate. |
 | Browser recommendations and account switch | View Tips; sign out in Settings; accept browser confirmation; sign in as the other synthetic user | **PASS.** Two conditional, unquantified recommendation cards were displayed; web sign-out returned to login and the separate scheduling account authenticated successfully. |
 | Browser scheduling + arithmetic | Use the dashboard's synthetic-baseline action; submit 2.4 kW / 60-minute task, 06:00–10:00 window, 09:00 preferred | **PASS.** Both MILP and deterministic reference selected 06:00; baseline $0.68, proposed/reference energy charges $0.92, preference penalty $0.06, weighted objectives $0.98, and candidate-minus-reference delta +$0.00. An independent Decimal calculation from the periods gives a 06:00 task charge of $0.24 vs $0.60 at fixed 09:00, a modeled $0.36 task-charge difference. |
+
+## Prompt 23 — Engineering baseline update (1 November 2026)
+
+This append-only update supersedes earlier statements in this file that mobile
+ESLint was unavailable or that `pytest-cov` was undeclared. It supplements,
+but does not erase, the historical Prompt 01–22 observations.
+
+- Git snapshot: `main`, HEAD
+  `d789f9814da9955db1c63ced921a95379dd08495`; inventory found 70 tracked
+  modified paths, 653 untracked paths, and no staged paths. The detailed
+  inventory and exact source/exclusion lists are in
+  [STAGE1_SOURCE_CHECKPOINT_PLAN.md](STAGE1_SOURCE_CHECKPOINT_PLAN.md).
+- The Alembic chain is continuous through `d1e2f3a4b5c6`. PostgreSQL 16
+  upgrade-to-head, downgrade-to-base, and re-upgrade passed after replacing
+  the old migration downgrade type `sa.DATETIME()` with `sa.DateTime()`.
+- `backend/requirements-dev.lock` is hash-pinned and was installed in clean
+  Windows and Linux Python 3.11 environments. The Linux full suite completed
+  with **265 passed, 13 warnings**, no native diagnostic, and exit 0.
+- Three Windows full-suite runs each reported **265 passed, 12 warnings**.
+  The native SQLite access-violation diagnostic appeared in **2/3** runs.
+  Windows stability remains **BLOCKED**; pytest exit 0 is not a stability
+  pass.
+- The worker-health bug was reproduced and fixed: the old health endpoint
+  imported a helper from a module where it did not exist and used a
+  `Queue.workers` attribute absent from locked RQ 2.11. It now uses
+  `app.tasks.get_redis_conn` and `Worker.all(..., queue=...)`. No-worker and
+  Redis-unreachable cases return explicit HTTP 503 states. Focused health and
+  migration tests passed (**4 passed, 8 warnings**).
+- PostgreSQL/Redis operational checks used disposable services. The
+  authenticated API smoke passed registration/login, ownership denial,
+  conservative usage eligibility, tariff separation, and deterministic
+  synthetic scheduling. Separately, TestClient exercised `/health/worker`
+  with a test-user dependency override and a real disposable RQ worker, which
+  validates route/worker behavior but not production authentication. No
+  external provider credentials were configured.
+- A clean disposable mobile copy passed `npm ci`, ESLint (**0 errors, 18
+  warnings**), TypeScript, and Expo web export (**1,075 modules; about
+  2.38 MB entry bundle**). npm reported **64 advisories** (2 low, 43
+  moderate, 18 high, 1 critical); no broad audit fix was applied.
+- Full `ruff check app tests` remains **FAIL** with 174 findings. The
+  existing backend CI lint job runs this command and will not be green until
+  those findings are addressed. Focused Ruff on the worker-health change
+  passes. The CI YAML parses as nine jobs, but hosted GitHub Actions was not
+  run.
+
+Overall Prompt 23 status is **PARTIAL**. The Windows native diagnostic is
+unresolved; full Ruff is failing; production deployment and real-household
+validation remain unproven. See
+[PROMPT23_ENGINEERING_BASELINE.md](PROMPT23_ENGINEERING_BASELINE.md) for the
+full evidence, acceptance table, and Prompt 24 conditions. No repository
+files were staged, committed, pushed, reset, or deleted; task-scoped
+disposable validation artifacts were removed after use.
 | Saved visual evidence | `backend/docs/demo/captures/*.png` | **PASS — 14 PNGs** covering clean login, analytics, bill estimate, recommendations, fixture selection/result, scheduling account dashboard, tariff configuration, TOU windows, task inputs, recommendation, cost comparison, and preview-only disclosure. See [`backend/docs/demo/SCREENSHOTS.md`](backend/docs/demo/SCREENSHOTS.md). |
 | Timed walkthrough / video | [`backend/docs/demo/DEMO_RUNBOOK.md`](backend/docs/demo/DEMO_RUNBOOK.md) | **PARTIAL / NOT CAPTURED.** Core browser interactions were exercised but not timed as an uninterrupted 5–7 minute presentation. No video was produced; local `ffmpeg` and OBS commands were unavailable. See [`FINAL_DEMO_ACCEPTANCE.md`](backend/docs/demo/FINAL_DEMO_ACCEPTANCE.md) for per-criterion status. |
 
@@ -445,3 +512,525 @@ before seeding and removed after the browser session. The API and Expo processes
 were stopped afterward. This run does not verify PostgreSQL/Redis runtime
 behavior, database recovery, real NEM12 semantics, customer savings, device
 dispatch, or production readiness.
+
+## Prompt 16B Stage 1 documentation baseline
+
+| Check | Command / evidence | Result |
+|---|---|---|
+| Current source identity | `git rev-parse HEAD`; initial `git status --short --untracked-files=all` | HEAD `d789f9814da9955db1c63ced921a95379dd08495`. At task start, tracked files were clean and 192 untracked entries were already present; they were preserved. The Stage 1 specification files added by this task are also untracked until explicitly staged/committed. |
+| Backend regression suite | From repository root: `Push-Location backend; ..\\.venv311\\Scripts\\python.exe -m pytest -q` | **PASS — 189 passed, 11 warnings, 36.76 s, exit 0.** Existing warnings are the python-json-logger move, Pydantic class-based config, Starlette 422 constant, and Alembic `path_separator` deprecations. |
+| Documentation link check | Python link-validation script over `backend/docs/stage1/*.md` | **PASS — all relative Markdown links in the seven Stage 1 documents resolve.** |
+| Whitespace / patch check | `git diff --check`; trailing-whitespace check over the seven Stage 1 documents and both updated root documents | **PASS.** |
+| Scope | Git diff and source inspection | No application source, schema migration, provider integration, or external-network unit test was added. The documents specify future acceptance criteria; the backend suite does not prove those new criteria are implemented. |
+| External-source confirmation | Official-source checks recorded in `backend/docs/stage1/EXTERNAL_DATA_INTEGRATION_DESIGN.md` | AER PRD page timed out; AEMO market-data and metering pages returned HTTP 403. MDFF v2.7 and NMI Procedure v7.4 applicability/effective dates remain unconfirmed. Open-Meteo docs/terms/pricing were accessible, but archived-run semantics and subscription entitlement remain unresolved. Dependent implementation is blocked pending authoritative confirmation. |
+
+This is a documentation-only architecture baseline. Historical Prompt 15
+results above are separate evidence and have not been presented as checks of
+the new specification requirements. No commit or push was made.
+
+## 21. Prompt 17 metering and coverage implementation — 31 October 2026
+
+| Check | Command / setup | Result |
+|---|---|---|
+| Current source revision | `git rev-parse HEAD` | `d789f9814da9955db1c63ced921a95379dd08495`; Prompt 17 changes remain uncommitted. |
+| Backend regression suite | From `backend/`: `..\\.venv311\\Scripts\\python.exe -m pytest -q` | **PASS — 203 passed, 11 warnings, 36.01 s, exit 0.** Includes migration, parser/upload, billing, usage, recommendation, vertical-slice, scheduling, and existing ownership tests. Warnings are Pydantic/Starlette/Alembic and python-json-logger deprecations. |
+| Core interval-quality Ruff | From `backend/`: `..\\.venv311\\Scripts\\python.exe -m ruff check app/services/interval_quality.py app/services/usage_analyzer.py app/schemas/usage.py` | **PASS — no findings.** |
+| Changed-Python undefined/unused check | From `backend/`: `..\\.venv311\\Scripts\\python.exe -m ruff check --select F` over all changed backend Python files | **PASS — no findings.** |
+| Mobile types | From `mobile/`: `npx tsc --noEmit` | **PASS — exit 0.** |
+| Patch whitespace | `git diff --check` | **PASS — exit 0.** Git printed only line-ending normalization warnings for existing LF files on Windows. |
+| Migration compatibility | Included `tests/test_migrations.py::test_clean_database_migrates_to_head`; isolated temporary SQLite database | **PASS.** New fields are additive/nullable; migration avoids duplicate additions when the metadata-created schema already includes them. No production or PostgreSQL database was touched. |
+| AEMO metering standards | Official metering procedures/guidelines page and candidate MDFF document access reattempted | **BLOCKED — HTTP 403.** Exact applicable document titles/versions/effective dates, NEM12 clock and interval-boundary rules, register/suffix direction semantics, quality/reason meanings, substitutions, and multiple-register rules remain unverified. No mapping was inferred. |
+| Visual/mobile integration | Dashboard and usage screens updated; no device/browser visual run | **PARTIAL.** TypeScript compiles, but this run did not validate device rendering or accessibility. |
+| External services, production data | No live provider calls, customer accounts, or production database were used | **NOT TESTED / BLOCKED** as applicable; no external API was added. |
+
+The full backend suite initially exposed a migration clean-schema duplicate-column
+case and outdated fixture assumptions. The migration was made idempotent for
+metadata-created clean databases; import/export channels sharing a timestamp
+are no longer treated as duplicates; parser tests now assert unsupported units
+are preserved but ineligible; and tests use explicit provenance/direction. The
+final Python 3.11 run above completed with no test failures. An earlier full
+run printed Windows background-thread access-violation reports despite pytest
+continuing; the final rerun did not reproduce those reports. No cause was
+established, so rerun the suite if similar process-level symptoms recur.
+
+Prompt 17 is **PARTIAL**, not fully accepted: local calculations and interface
+contracts are tested, but NEM12 records remain ineligible for verified
+UTC-dependent customer metrics until authoritative AEMO metering semantics can
+be inspected. See
+[`backend/docs/stage1/PROMPT17_MIGRATION_COMPATIBILITY.md`](backend/docs/stage1/PROMPT17_MIGRATION_COMPATIBILITY.md)
+for the acceptance table, migration behavior, compatibility policy, and exact
+unresolved source questions. No commit, push, or user-file cleanup was done.
+
+## 22. Prompt 17B AEMO NEM12 validation — final checks
+
+| Check | Command / setup | Result |
+|---|---|---|
+| Current source revision | `git rev-parse HEAD` | `d789f9814da9955db1c63ced921a95379dd08495`; Prompt 17B changes remain in the existing dirty worktree. No commit or push was made. |
+| Complete backend test suite | From `backend/`: `..\\.venv311\\Scripts\\python.exe -m pytest -q` | **PASS — 217 passed, 11 warnings, 40.40 s, exit 0.** Warnings are deprecations from python-json-logger, Pydantic, Starlette, and Alembic. |
+| Focused NEM12 Ruff | From `backend/`: `..\\.venv311\\Scripts\\python.exe -m ruff check app\\services\\nem12_parser.py app\\services\\nem12_importer.py tests\\test_nem12_parser.py tests\\test_upload.py tests\\test_migrations.py` | **PASS — no findings.** |
+| Broader selected-file Ruff | From `backend/`: `..\\.venv311\\Scripts\\python.exe -m ruff check app\\services\\nem12_parser.py app\\services\\nem12_importer.py app\\api\\meters.py app\\tasks.py app\\models\\meter.py app\\models\\reading.py app\\schemas\\meter.py app\\schemas\\reading.py tests\\test_nem12_parser.py tests\\test_upload.py tests\\test_migrations.py` | **PARTIAL — 5 findings** on unchanged adjacent lines: one unused `HTTPException` import, one TYPE_CHECKING import-order issue, and three pre-existing long lines. These were not changed as unrelated cleanup. |
+| Mobile TypeScript | From `mobile/`: `npx tsc --noEmit` | **PASS — exit 0.** |
+| PostgreSQL migration cycle | Disposable local `postgres:16-alpine`, database `gridsense`; Alembic upgrade to head, downgrade to `a7b8c9d0e1f2`, then upgrade to head | **PASS.** Revision reached `b8c9d0e1f2` before and after the downgrade/re-upgrade cycle. The named `--rm` container was stopped and removed. No persistent database was used. |
+| Patch whitespace | `git diff --check` | **PASS — exit 0 after the final documentation updates.** Git emitted only existing Windows line-ending normalization warnings for other modified Python files. |
+| Authoritative-source status | AEMO MDFF v2.7 PDF and official related procedures | **PARTIAL/BLOCKED.** The MDFF document is verified, but related procedures/source-specific direction and clock evidence remain inaccessible or unverified. No customer direction or UTC timestamp interpretation was enabled. |
+
+The first PostgreSQL invocation used the `psycopg` SQLAlchemy driver, which is
+not installed in the project environment. The retry used the project's
+installed `psycopg2` driver; no dependency or manifest was changed. The
+PostgreSQL cycle verifies migration DDL behavior, not production database
+availability, backup/recovery, or live application integration. See
+[`backend/docs/stage1/PROMPT17_MIGRATION_COMPATIBILITY.md`](backend/docs/stage1/PROMPT17_MIGRATION_COMPATIBILITY.md)
+and
+[`backend/docs/stage1/AEMO_NEM12_COMPLIANCE_MATRIX.md`](backend/docs/stage1/AEMO_NEM12_COMPLIANCE_MATRIX.md)
+for implementation status and unresolved semantic blockers.
+
+## 23. Prompt 18 tariff revision and AER catalog verification — 31 October 2026
+
+| Check | Command / setup | Result |
+|---|---|---|
+| Current source revision | `git rev-parse HEAD` | `d789f9814da9955db1c63ced921a95379dd08495`; Prompt 18 changes remain uncommitted alongside the pre-existing Prompt 17/17B worktree changes. No commit or push was made. |
+| Full backend suite | From `backend/`: `..\\.venv311\\Scripts\\python.exe -m pytest -q` | **PASS — 234 passed, 12 warnings, 48.87 s, exit 0.** Warnings are dependency/API deprecations. |
+| Recommendation and scheduling regressions | From `backend/`: `..\\.venv311\\Scripts\\python.exe -m pytest tests\\test_recommendation_engine.py tests\\test_scheduling_contract.py -q` | **PASS — 28 passed.** New coverage confirms confirmed revision snapshots, not the mutable legacy projection, govern effective dates and scheduling rates, and a horizon spanning revisions is blocked. One focused invocation printed transient Windows native SQLite access-violation diagnostics during teardown while still exiting 0; the final full-suite run completed cleanly. |
+| Prompt 18 targeted Ruff | From `backend/`: Ruff on changed tariff, billing, scheduling, AER service/schema, and relevant test modules | **PASS — no findings.** Repository-wide `ruff check app tests` still fails with lint findings; no broad unrelated cleanup was attempted. |
+| Mobile TypeScript | From `mobile/`: `npx tsc --noEmit` | **PASS — exit 0.** |
+| PostgreSQL migration cycle | Isolated `postgres:16-alpine` disposable container; Alembic upgrade to head, downgrade to `b8c9d0e1f2`, then upgrade to head | **PASS.** Head was `c9d0e1f2a3b4` before and after the cycle. The temporary container was stopped and removed. Existing `studentos-db` and `studentos-redis` containers were not touched. |
+| Patch whitespace | `git diff --check` | **PASS — exit 0.** Git emitted line-ending normalization warnings for existing modified files only. |
+| AER data-use and customer evidence | AER API/source review and tariff integration boundaries | **PARTIAL/BLOCKED.** The adapter does not persist/cache generic plan payloads and does not activate a plan as a customer tariff; explicit redistribution/attribution/retention rights remain unverified. Customer-specific bills and real NEM12 consumption are not certified. |
+
+These are Prompt 18 results, separate from the historical Prompt 17B
+verification above. Full backend tests validate the implemented contracts but
+do not establish AER data-use permissions, retailer-contract correctness,
+complete bill accuracy, or authoritative NEM12 direction/time interpretation.
+See
+[`backend/docs/stage1/PROMPT18_ACCEPTANCE.md`](backend/docs/stage1/PROMPT18_ACCEPTANCE.md)
+and
+[`backend/docs/stage1/PROMPT18_MIGRATION_COMPATIBILITY.md`](backend/docs/stage1/PROMPT18_MIGRATION_COMPATIBILITY.md).
+
+## 24. Prompt 19 weather and grid context — 31 October 2026
+
+| Check | Command / setup | Result |
+|---|---|---|
+| Current source revision and worktree | `git rev-parse HEAD`; initial `git status --short` | HEAD `d789f9814da9955db1c63ced921a95379dd08495`. Existing Prompt 17/17B/18 changes and untracked files were preserved. No commit or push was made. |
+| Baseline backend tests before Prompt 19 edits | From repository root: `..\\.venv311\\Scripts\\python.exe -m pytest -q` | **PASS — 234 passed, 12 warnings, exit 0.** The run printed a transient Windows/SQLite access-violation diagnostic despite exit 0. |
+| Baseline mobile TypeScript | From `mobile/`: `npx tsc --noEmit` | **PASS — exit 0.** |
+| Open-Meteo provider and migration tests | From `backend/`: `..\\.venv311\\Scripts\\python.exe -m pytest tests\\test_external_data.py tests\\test_migrations.py -q` | **PASS — 22 passed, 8 dependency deprecation warnings.** |
+| Full backend suite | From `backend/`: `..\\.venv311\\Scripts\\python.exe -m pytest -q` | **PASS — 255 passed, 12 warnings, 94.51 s, exit 0.** Intermittent Windows SQLite native access-violation diagnostics were printed during teardown; pytest completed successfully with all tests passing. |
+| Prompt 19 targeted Ruff | From `backend/`: Ruff on changed provider/API/schema/model/tests | **PASS — no findings.** |
+| Mobile TypeScript | From `mobile/`: `npx tsc --noEmit` | **PASS — exit 0.** |
+| PostgreSQL migration cycle | Disposable PostgreSQL 16 instance; Alembic upgrade to `d1e2f3a4b5c6`, downgrade to `c9d0e1f2a3b4`, re-upgrade | **PASS — final revision `d1e2f3a4b5c6`.** Disposable container was removed and unrelated containers were untouched. |
+| Patch whitespace | `git diff --check` | **PASS — exit 0.** Git printed line-ending normalization warnings for existing modified files. |
+| Open-Meteo source/terms | Official docs, terms, pricing and license pages; see `EXTERNAL_PROVIDER_SOURCE_MATRIX.md` | Forecast API v1 fields/units, CC BY 4.0 attribution and paid customer endpoint documented. No paid key/account was available for live verification; issue time and resolved `best_match` model remain unknown. |
+| AEMO market data | AEMO official guidance and public NEMWeb directory | AEMO guidance returned HTTP 403; public DispatchIS file listing was reachable. Feed schema, VIC mapping, timing, revisions and use rights remain blocked; no adapter or market data is enabled. |
+
+Prompt 19 acceptance is **PARTIAL**: weather context is available only with
+operator-configured paid access; market data is **BLOCKED**. See
+[`backend/docs/stage1/PROMPT19_ACCEPTANCE.md`](backend/docs/stage1/PROMPT19_ACCEPTANCE.md)
+and
+[`backend/docs/stage1/EXTERNAL_PROVIDER_SOURCE_MATRIX.md`](backend/docs/stage1/EXTERNAL_PROVIDER_SOURCE_MATRIX.md).
+Provider failure does not block meter analytics, tariff calculations or
+scheduling. No customer savings claim is derived from wholesale market data.
+
+## 25. Prompt 20 recommendations and reproducible metrics
+
+| Check | Command / setup | Result |
+|---|---|---|
+| Pre-Prompt 20 baseline | From `backend/`: `..\\.venv311\\Scripts\\python.exe -m pytest -q` | **PASS — 255 passed, 12 warnings, exit 0.** Existing worktree included prior Prompt 17–19 changes; no user changes were reverted. |
+| Focused Prompt 20 regressions | `..\\.venv311\\Scripts\\python.exe -m pytest tests\\test_billing.py tests\\test_vertical_slice.py tests\\test_recommendation_engine.py tests\\test_anomaly_detector.py tests\\test_insights_endpoints.py -q` | **PASS — 47 passed, 6 warnings, exit 0.** |
+| Full backend suite | From `backend/`: `..\\.venv311\\Scripts\\python.exe -m pytest -q` | **PASS — 261 passed, 12 warnings, 66.17 s, exit 0.** A native access-violation diagnostic appeared during SQLAlchemy schema teardown in `test_scheduling_contract.py`; pytest completed all tests. |
+| SQLite diagnostic isolation | Focused Prompt 20 regression group and `pytest -q tests\\test_scheduling_contract.py` | **PASS — 47 and 19 tests.** The focused Prompt 20 group did not reproduce the diagnostic; the scheduling-contract module did print native access-violation diagnostics in SQLAlchemy schema/result handling. No root cause was established. |
+| Focused Ruff | `..\\.venv311\\Scripts\\python.exe -m ruff check` over modified Prompt 20 backend modules and tests | **PASS — no findings.** |
+| Mobile TypeScript | From `mobile/`: `npx tsc --noEmit` | **PASS — exit 0.** |
+| PostgreSQL migration check | No Prompt 20 schema migration was added | **NOT APPLICABLE.** No database changes were required for response-time evidence. |
+| Patch whitespace | `git diff --check` | **PASS — exit 0.** Existing CRLF normalization warnings remain on unrelated dirty files. |
+
+Prompt 20 is **PARTIAL**. The recommendation evidence is response-time only,
+not durably persisted or historically replayable; recommendation notifications
+are not deduplicated; scheduling outputs do not yet use the new common evidence
+schema; and no forecast-dependent recommendation is enabled pending held-out
+evaluation. See
+[`backend/docs/stage1/PROMPT20_ACCEPTANCE.md`](backend/docs/stage1/PROMPT20_ACCEPTANCE.md)
+for behavior-by-behavior status and remaining gaps. No external API credential
+was requested or configured, and no commit or push was made.
+
+## 26. Prompt 20B SQLite native diagnostics and stability — 1 November 2026
+
+| Check | Command / setup | Result |
+|---|---|---|
+| Revision and staged state | `git rev-parse HEAD`; `git diff --cached --name-only` | HEAD `d789f9814da9955db1c63ced921a95379dd08495`; worktree already contained Prompt 17–20 edits. No files were staged. No reset, commit, or push was performed. |
+| Runtime versions | `.venv311`; Python `sys.version`, SQLite `sqlite3.sqlite_version`, package `__version__` values | Windows 10 build `10.0.26200`; CPython 3.11.9; SQLite 3.45.1; sqlite module 2.6.0; SQLAlchemy 2.0.52; pytest 9.1.1; greenlet 3.5.5; aiosqlite unavailable. SQLite reports serialized threading (`threadsafety=3`, `THREADSAFE=1`, `MUTEX_W32`). |
+| Before-fix module repetitions | `pytest -q tests\test_scheduling_contract.py`, three separate runs | 2/3 emitted Windows native access-violation diagnostics while reporting 19 passed, 6 warnings; one run had no diagnostic. |
+| Before-fix individual test | `test_scheduling_fixture_validates_and_openapi_exposes_v1`, three separate processes | 3/3 passed, no diagnostic. |
+| After-fix scheduling module | Same captured module command repeated three times; also one run with `pytest -s -q` | 4/4 module runs: 19 passed, no diagnostic. |
+| After-fix individual DB-backed scheduling tests | Each of the 10 fixture-using tests run separately | 10/10 passed; no diagnostic. |
+| Scheduling/integration checks | `pytest -s -q tests\test_scheduling_contract.py tests\test_vertical_slice.py tests\test_migrations.py` | **PASS — 23 passed, 10 warnings; no diagnostic.** |
+| Full backend suite | `pytest -q` after fixture change, three separate runs | **Tests PASS / stability FAIL — 3/3 runs had 261 passed, 12 warnings; durations 58.44 s, 49.53 s, 66.63 s.** Native diagnostics in 2/3 runs (two traces in one run); one run was clean. A stack ended in `test_scheduling_contract.py` fixture teardown during `Base.metadata.drop_all()` SQLite PRAGMA schema introspection; another trace was in SQLAlchemy result processor setup. |
+| Ruff | `ruff check tests\test_scheduling_contract.py` | **PASS.** |
+| Mobile TypeScript | `npx tsc --noEmit` from `mobile/` | **PASS.** |
+| Migration scope | No migration changed; migration tests included in focused integration | **PASS for covered migration tests; PostgreSQL service was not rerun.** |
+| Staged secrets/data/artifacts | `git diff --cached --name-only` and staged-path check | **None staged.** No credentials, local DB, virtual environment, cache, or generated graph artifact is in the index. |
+
+The scheduling fixture's in-memory `StaticPool` was replaced with a per-test
+file-backed SQLite database to avoid sharing one DBAPI connection among the
+fixture setup session and TestClient request sessions running on worker
+threads. Isolated repetitions no longer reproduced the diagnostic. Three
+post-change full-suite runs all passed 261 tests, but two still printed the
+native diagnostic (one clean run; one diagnostic run printed two traces).
+This is a useful fixture-isolation mitigation, **not a confirmed complete
+root-cause fix**. The disposable SQLite files retained by the latest pytest
+sessions were removed; pytest's temp directories were left intact. Stability
+remains **PARTIAL** and Prompt 21 should not treat the current full-suite
+result as clean until the native fault is isolated or independently contained.
+The detailed trace, limitations, containment plan, and proposed staging list
+are in
+[`PROMPT20B_STABILITY_REPORT.md`](backend/docs/stage1/PROMPT20B_STABILITY_REPORT.md).
+
+## 27. Prompt 20C native SQLite fault isolation — 1 November 2026
+
+| Check | Command / setup | Result |
+|---|---|---|
+| Revision / staged state | `git rev-parse HEAD`; `git diff --cached --name-only` | HEAD `d789f9814da9955db1c63ced921a95379dd08495`; the Prompt 17–20B worktree remained dirty and preserved; index empty; no credentials, local DBs, caches, virtual environments, or generated artifacts staged. |
+| Windows environment | `.venv311` interpreter and package versions | Windows 10 build `10.0.26200`; CPython 3.11.9; SQLite 3.45.1; SQLAlchemy 2.0.52; pytest 9.1.1; pytest-asyncio 1.4.0; greenlet 3.5.5. |
+| Scheduling alone after 20B mitigation | 3 captured and 1 uncaptured runs | All four runs: 19 passed, no diagnostic. |
+| Anomaly/scheduling order | Three runs in each order | Both `anomaly -> scheduling` and reverse emitted diagnostics in 1/3 runs; no deterministic ordering effect established. |
+| Reduced anomaly/scheduling combination | Full anomaly module plus one scheduling smoke test, five runs per order | 0/10 diagnostics. Individual anomaly class groups followed by scheduling also did not reproduce in three group runs. |
+| Other fixture-order checks | StaticPool API group then scheduling, 3 runs; reverse, 3; shared-memory module group then scheduling, 1 | StaticPool-first 0/3 diagnostics; scheduling-first 1/3; shared-memory group no diagnostic. One ORM-heavy group (billing, anomaly, forecasting, usage) then scheduling printed diagnostics. Results are intermittent and not causal proof. |
+| Windows full suite | `..\\.venv311\\Scripts\\python.exe -m pytest -q`, 3 independent processes | 3/3 runs: 261 passed, 12 warnings; durations 58.44 s, 49.53 s, 66.63 s. Native diagnostics in 2/3 runs, none in 1/3. |
+| Capture-mode comparison | Full suite with `pytest -s -q` twice and `pytest --capture=sys -q` once | All 3 runs: 261 passed, 12 warnings; no diagnostic. Preliminary association: default fd capture showed diagnostics in 2/3 runs, but samples are too small to infer causality. |
+| Linux focused comparison | Disposable `gridsense-api:latest` container; anomaly + scheduling tests | 24 passed, 7 warnings; no diagnostic in the one run. |
+| Linux full suite comparison | Same disposable image; `python -m pytest -q` | 261 passed, 13 warnings; no diagnostic in the one run. Container Python 3.11.16 / SQLite 3.46.1; SQLAlchemy 2.0.52 / greenlet 3.5.5 / pytest 9.1.1 / pytest-asyncio 1.4.0. |
+| Ruff / mobile / integration | Ruff on scheduling fixture; `npx tsc --noEmit`; scheduling + vertical-slice + migrations tests with `-s` | Ruff **PASS**; TypeScript **PASS**; integration **23 passed**, no native diagnostic. |
+| Patch whitespace | `git diff --check` | **PASS.** |
+
+Prompt 20C searched all backend fixtures using SQLite, SQLAlchemy metadata,
+TestClient and dependency overrides. Several module-global engines are not
+explicitly disposed; several TestClient fixtures use `StaticPool` with
+`check_same_thread=False`; and some fixtures clear rather than restore global
+dependency overrides. The existing per-test file-backed scheduling fixture
+removes one concrete connection-sharing hazard, but none of the audit findings
+was isolated as the remaining cause.
+
+**Root cause unresolved; no new source fix was made.** The intermittent native
+diagnostic occurs on Windows but was not observed in one Linux full-suite run.
+This comparison is limited: the prebuilt Linux image supplied runtime
+dependencies, and only pytest test packages were installed in the disposable
+container; Python/SQLite versions differ from Windows. Do not treat either
+passing pytest counts or Linux's one clean run as proof of stability.
+
+Two Windows full-suite runs with capture disabled and one with Python-stream
+capture had no diagnostic. This suggests default file-descriptor capture as a
+testable variable, not a proven trigger or containment.
+
+Stability remains **PARTIAL**. Prompt 21 readiness for a clean test baseline is
+**BLOCKED** until repeated Windows full-suite runs are free of native
+diagnostics or an independently verified containment is documented. See
+[`PROMPT20C_NATIVE_FAULT_REPORT.md`](backend/docs/stage1/PROMPT20C_NATIVE_FAULT_REPORT.md)
+for the fixture audit, order experiments, trace evidence, environment caveats,
+and staging recommendation. No source feature, migration, dependency change,
+commit, or push was made for Prompt 20C.
+
+## 28. Prompt 21 scheduling evidence and Windows stability — 1 November 2026
+
+| Check | Command / setup | Result |
+|---|---|---|
+| Revision / preserved state | `git rev-parse HEAD`; `git diff --cached --name-only` | HEAD remains `d789f9814da9955db1c63ced921a95379dd08495`; Prompt 17–20C worktree edits and existing untracked files were preserved; no files were staged. Existing oddly named SQLite test artifacts and generated graph outputs were not touched or staged. |
+| Windows runtime | `.venv311` | CPython 3.11.9; SQLite 3.45.1; SQLAlchemy 2.0.52; pytest 9.1.1; greenlet 3.5.5. |
+| Focused advisory regressions | Scheduling contract/optimizer, forecast evaluation, recommendation engine and vertical slice tests | **56 passed, 7 warnings, exit 0.** The run printed `Windows fatal exception: access violation` from SQLAlchemy SQLite `has_table` / `PRAGMA` during `Base.metadata.drop_all()` in the scheduling fixture. Test count does not establish stability. |
+| Windows full backend suite | Three independent pytest processes in a disposable copy of the backend, with temporary SQLite database and capture enabled | **3/3 runs: 262 passed, 12 warnings, exit 0.** Native diagnostics occurred in **2/3** runs. One clean run does not establish stability. |
+| Linux full backend suite | Disposable `gridsense-api:latest` container, disposable bind-mounted source copy, test packages installed inside `docker run --rm` container | **262 passed, 14 warnings, exit 0; no native diagnostic.** Runtime: Python 3.11.16; SQLite 3.46.1; SQLAlchemy 2.0.52; pytest 9.2.0; pytest-asyncio 1.4.1; greenlet 3.5.5. This differs from Windows and does not isolate a cause. |
+| Native traces | Same full-suite logs | Run 2 included SQLAlchemy cursor `fetchall` → SQLite `_get_table_pragma` / `has_table` → `Base.metadata.drop_all()` at the scheduling fixture teardown (`test_scheduling_contract.py:113`). Run 3 included `exec_driver_sql` → SQLite `_get_table_pragma` / `has_table` → the same teardown. The focused run additionally showed `_setup_result_proxy` / `do_execute` frames. Root cause remains unresolved; no suppression or dependency upgrade was introduced. |
+| Temporary-run isolation | Disposable copied source tree under `%TEMP%`; tests executed from copied backend working directory | Avoided modifying the pre-existing untracked `backend/file*` SQLite artifacts. An initial run directly from a temporary working directory was invalid because repository tests use CWD-relative Alembic and sample-file paths; it is excluded from the three-run suite result. |
+| Focused Ruff | Changed scheduling, forecast-evaluation modules and related tests | **PASS — no findings.** |
+| Mobile TypeScript | `npx tsc --noEmit` from `mobile/` | **PASS — exit 0.** |
+| Whitespace | `git diff --check` | **PASS — exit 0**, with pre-existing LF/CRLF normalization warnings. |
+| Forecast evaluation | Existing UCI generated predictions/metrics inspected; matched baseline-relative metrics computed | Prophet MAE change vs best matched baseline: +7.4% at 1 day, -17.3% at 7 days, -29.9% at 14 days. Nominal 80% interval coverage is about 96% at all three horizons. One French household only; no verified historical weather issue-time features. Forecast advice remains disabled. |
+| Migration checks | No Prompt 21 migration added | **NOT APPLICABLE.** |
+
+Prompt 21 integrates preferred, greedy and MILP comparison into the existing
+optimizer, adds conservative baseline eligibility and response-scoped
+scheduling evidence, and updates the Expo advisory view and chronological
+forecast summary. A user-declared measured baseline is blocked because there
+is no server-verified submeter/disaggregation source. The synthetic flow is
+illustrative, and no schedule is executed.
+
+**Prompt 21 status: PARTIAL. Test stability: BLOCKED.** Prompt 20C's Windows
+SQLite native diagnostic remains unresolved and was observed in the focused
+run and two of three full-suite repetitions. See
+[`PROMPT21_ACCEPTANCE.md`](backend/docs/stage1/PROMPT21_ACCEPTANCE.md) and
+[`PROMPT21_FORECAST_EVALUATION.md`](backend/docs/stage1/PROMPT21_FORECAST_EVALUATION.md).
+No commit or push was made.
+
+## Prompt 22 — Stage 1 end-to-end baseline
+
+**Assessment: PARTIAL. Windows runtime stability: BLOCKED.**
+
+Baseline revision remains `d789f9814da9955db1c63ced921a95379dd08495`. The worktree
+already contained overlapping Prompt 17-21 changes. Prompt 22 added account
+state invalidation, per-user weather-location keys, a tariff remediation
+action, editable illustrative scheduling inputs, expanded vertical-slice
+assertions and structured mobile display of backend validation details. No
+migration, external credential, commit, or push was added.
+
+| Verification | Prompt 22 result |
+|---|---|
+| Focused backend (`test_vertical_slice.py`, `test_scheduling_contract.py`) | **23 passed, 7 warnings** |
+| Full Windows backend suite, disposable copy | **262 passed, 12 warnings; exit 0, native SQLite access violation observed** |
+| Full Linux Docker suite, disposable copy | **262 passed, 14 warnings; no native diagnostic observed in that run** |
+| Focused Ruff | **PASS** |
+| Mobile `npx tsc --noEmit` | **PASS** |
+| Expo web export | **PASS**; 1,075 modules and 2.38 MB JS entry bundle |
+| Browser journeys | **PASS for exercised demo/unavailable paths**; test-only accounts and data |
+| ESLint | **BLOCKED**; local executable/configuration unavailable, no configuration changed |
+| `git diff --check` | **PASS**, with line-ending normalization warnings |
+| PostgreSQL migration check | **NOT APPLICABLE**; no Prompt 22 migration |
+
+The Windows diagnostic occurred during SQLAlchemy SQLite schema
+reflection/`PRAGMA` access in test teardown despite exit code 0. This remains
+unresolved; Linux passing does not establish Windows stability. AEMO
+direction/source-time interpretation, measured appliance-baseline eligibility,
+customer tariff confirmation and durable evidence replay remain incomplete.
+
+See
+[`PROMPT22_ACCEPTANCE.md`](backend/docs/stage1/PROMPT22_ACCEPTANCE.md),
+[`STAGE1_END_TO_END_TEST_REPORT.md`](backend/docs/stage1/STAGE1_END_TO_END_TEST_REPORT.md),
+and
+[`STAGE1_RELEASE_READINESS.md`](backend/docs/stage1/STAGE1_RELEASE_READINESS.md).
+No changes were staged, committed, pushed, reset, or discarded.
+
+## Prompt 23A — Engineering stabilization update (2 November 2026)
+
+This update supersedes the Prompt 23 lint and mobile-dependency status above.
+It preserves the historical results and records the Prompt 23A reruns.
+
+| Gate | Command / evidence | Result |
+|---|---|---|
+| Full backend Ruff | From `backend/`: `..\.venv311\Scripts\python.exe -m ruff check app tests` | **PASS — exit 0; All checks passed.** The 174 findings recorded in Prompt 23 have been fixed without blanket `noqa` or rule suppression. |
+| Focused database/API regression | From `backend/`: `..\.venv311\Scripts\python.exe -m pytest tests\test_auth.py tests\test_insights_endpoints.py tests\test_ml.py tests\test_password_reset.py -q` | **PASS — 23 passed, 7 warnings, 27.19 s.** The four fixtures now use per-test `tmp_path` databases and engine disposal. |
+| Full backend suite, Windows | From `backend/`: `..\.venv311\Scripts\python.exe -m pytest -q --capture=fd` | **Assertion PASS / stability BLOCKED — 265 passed, 12 warnings, 71.92 s, exit 0; two unsuppressed `Windows fatal exception: access violation` diagnostics.** A SQLAlchemy trace includes `engine.cursor.fetchall`. |
+| Full backend suite, Linux | Disposable `gridsense-api:latest` container, read-only backend mount; hash-locked development requirements installed, then `pytest -q -p no:cacheprovider` | **PASS for this Linux environment — 265 passed, 13 warnings, 58.31 s; no native diagnostic found.** This does not resolve the Windows failure. |
+| Mobile dependencies | Clean `npm ci` from `mobile/` | **PASS.** Expo 54.0.38, Expo Router 6.0.24, React Native 0.81.5, React 19.1.0, TypeScript 5.9.3. |
+| Mobile ESLint | `npm run lint` | **PASS — exit 0.** |
+| Mobile TypeScript | `npm run typecheck` | **PASS — exit 0.** |
+| Expo SDK compatibility | `npx expo install --check` | **PASS — dependencies are up to date.** |
+| Expo web export | `npm run export:web` | **PASS — exported 1,086 modules; 2.42 MB JavaScript entry bundle.** |
+| npm security audit | `npm audit`; `npm audit --omit=dev` | **BLOCKED — 49 total (1 low, 43 moderate, 5 high); production tree 36 (1 low, 30 moderate, 5 high).** High advisories remain in `expo-router`, `query-string`, `decode-uri-component`, `image-size`, and `postcss`; no verified SDK-compatible resolution was established. |
+| Mobile web modal focus | Code review plus static checks | **PARTIAL.** Automation modal blur/input-focus/restore logic is implemented; browser focus and `aria-hidden` warning verification remains outstanding. |
+| PostgreSQL / Redis / authenticated API | Prompt 23 disposable service evidence | **PASS — prior baseline evidence only.** Not rerun in this Prompt 23A pass; not production deployment validation. |
+| Hosted CI | GitHub Actions | **NOT RUN.** Local workflow parsing does not establish a hosted pass. |
+| Git/source state | `git status`, `git diff --check` | Branch `main`, HEAD `d789f9814da9955db1c63ced921a95379dd08495`; 0 staged paths; 103 tracked modified paths and 657 untracked paths. `git diff --check` exits 0, with CRLF normalization warnings. |
+
+### Test database and preservation note
+
+A controlled reproduction of the legacy SQLite URL
+`sqlite:///file:probe?mode=memory&cache=shared` with `uri=True` created a
+disk file in the temporary working directory. The four affected test modules
+were changed to use `tmp_path` databases; the focused regression passed, and
+metadata for the five pre-existing backend-root `file*` artifacts did not
+change during that focused run.
+
+At least one earlier run used the legacy URLs before the fixture fix, and no
+pre-run hashes or snapshots exist for those artifacts. Their historical
+contents therefore cannot be certified as unchanged. They remain preserved
+in place; no deletion, rewrite, or speculative restoration was attempted.
+See [ENGINEERING_DEFECT_REGISTER.md](ENGINEERING_DEFECT_REGISTER.md),
+especially D23A-003 and D23A-004.
+
+Prompt 23A is **PARTIAL / BLOCKED**. The Windows SQLite native diagnostic,
+artifact-preservation uncertainty, browser verification, remaining
+development-tool advisories, and hosted CI remain open. Prompt 24 should not
+begin. See
+[PROMPT23A_STABILIZATION_REPORT.md](PROMPT23A_STABILIZATION_REPORT.md) and
+[ENGINEERING_DEFECT_REGISTER.md](ENGINEERING_DEFECT_REGISTER.md).
+
+### Post-Prompt 23A mobile SDK/security follow-up
+
+The preceding Prompt 23A section records the Expo SDK 54 mobile state at that
+time. It is superseded for current mobile dependencies by the SDK 58
+modernization recorded in
+[PROMPT23A_STABILIZATION_REPORT.md](PROMPT23A_STABILIZATION_REPORT.md):
+
+| Gate | Command / evidence | Current result |
+|---|---|---|
+| Expo dependency alignment | `npx expo install --check` | **PASS**, dependencies up to date. |
+| Expo project validation | `npx expo-doctor` | **PASS**, 20/20 checks. |
+| Public Expo config | `npx expo config --type public --json` | **PASS**. |
+| Mobile TypeScript | `npm run typecheck` | **PASS**, exit 0. |
+| Mobile lint | `npm run lint` | **PASS**, exit 0. |
+| Expo web export | `npm run export:web` | **PASS**, web bundle exported. |
+| Full npm audit | `npm audit` | **14 moderate**, 0 high, 0 critical; remaining advisories are development-tool dependencies. |
+| Production dependency audit | `npm audit --omit=dev` | **0 advisories**. |
+| Mobile modal browser acceptance | Prompt 23B isolated API + Expo web authenticated flow | **PASS for tested flow**; focus entry, Tab navigation, Escape, close control, and focus restoration passed; no `aria-hidden` warning or page error. |
+
+The mobile source includes the SDK 58 package set, updated splash
+configuration, TypeScript 6-compatible config and fixes for newly surfaced
+React/React Native type and lint errors. A non-forced `npm audit fix` found no
+additional compatible updates. Do not treat the zero production audit as a
+zero-advisory full tree; the remaining moderate development-tool findings are
+tracked as D23A-006.
+
+This follow-up does not change the overall engineering decision. Windows
+SQLite native diagnostics, artifact-preservation uncertainty, and hosted CI
+remain open; Prompt 24 should not begin.
+
+## Prompt 23B engineering reconciliation
+
+The original verification tables above are historical snapshots from the
+named runs. This section records the later Prompt 23B evidence and supersedes
+the earlier mobile-browser status; it does not retroactively change results
+from those earlier environments.
+
+| Gate | Prompt 23B evidence | Classification |
+|---|---|---|
+| Windows backend suite / native fault | Seven child-process full-suite runs, same 270-node fingerprint. Each reported 265 passed, 12 warnings, exit 0; four runs emitted six native access-violation diagnostics. | **BLOCKED** |
+| Capture-mode comparison | Native diagnostics observed under file-descriptor capture, Python-stream capture, and no capture. | **INCONCLUSIVE as cause; no mode is a remedy** |
+| Runtime comparison | Python 3.11.9 / SQLite 3.45.1 compared with isolated Python 3.11.15 / SQLite 3.50.4; newer pair also faulted, but both versions changed together. | **INCONCLUSIVE** |
+| Linux locked suite | Three disposable-container full runs on Python 3.11.16 / SQLite 3.46.1; same test fingerprint, 265 passed each, no native diagnostics. | **PASS — scoped to those Linux runs** |
+| Mobile browser accessibility | Authenticated Automation browser flow verified modal focus entry, Tab movement, Escape dismissal, close-control dismissal, and focus return; no `aria-hidden` warning or page error. | **PASS — tested flow, not full accessibility certification** |
+| SDK 58 security audit | Same-lock audit recorded 14 moderate development-tool advisories and zero production-tree advisories; audit not freshly run in the final reporting pass. | **PARTIAL / prior evidence** |
+| PostgreSQL / Redis / full API integration | Prompt 23 evidence exists, but these gates were not rerun in Prompt 23B. | **PARTIAL / NOT FRESHLY VERIFIED** |
+| Hosted CI | GitHub Actions was not executed. | **BLOCKED / NOT RUN** |
+| Source-only clean-checkout reproduction | Linux tests used a sanitized source copy; no clean checkout of all source candidates was built. | **PARTIAL** |
+
+The reusable child-process diagnostic harness is
+[run_native_pytest.py](backend/scripts/run_native_pytest.py); details,
+controlled experiment limitations, and the next bounded investigation are in
+[PROMPT23B_NATIVE_STABILITY_REPORT.md](PROMPT23B_NATIVE_STABILITY_REPORT.md).
+The fault remains unresolved. Four of seven clean-exit Windows processes
+emitted native diagnostics, so neither the Windows suite nor the repository
+can be called stable. The Linux result does not contain or repair the Windows
+fault.
+
+Prompt 23B fixed the reproduced React Native Web modal lifecycle issue in
+[automation.tsx](mobile/app/(tabs)/automation.tsx): Escape now requests
+closure, and focus restoration waits for `onDismiss`. This was tested against
+a disposable migrated SQLite backend and a disposable account. The test does
+not constitute a complete browser/assistive-technology audit.
+
+The source inventory in
+[STAGE1_SOURCE_CHECKPOINT_PLAN.md](STAGE1_SOURCE_CHECKPOINT_PLAN.md) records
+the current review candidate list. At this snapshot HEAD remains
+`d789f9814da9955db1c63ced921a95379dd08495`, branch `main`, and no paths were
+staged. The source-only checkpoint, hosted CI, current dependency audit,
+PostgreSQL/Redis repeat, and historical `backend/file*` artifact certainty
+remain unresolved. **Prompt 24 should not begin.**
+
+## Prompt 23C lifecycle follow-up — 2 November 2026
+
+The bounded Prompt 23C lifecycle investigation and fresh gates are documented
+in
+[PROMPT23C_LIFECYCLE_INVESTIGATION.md](backend/docs/stage1/PROMPT23C_LIFECYCLE_INVESTIGATION.md).
+The result is **PARTIAL / BLOCKED**; it does not supersede the seven-process
+full-Windows evidence above.
+
+| Gate | Prompt 23C evidence | Classification |
+|---|---|---|
+| Windows SQLite native stability | Six controlled 25-node A/B runs (three per arm), plus one corrected original-worktree run, emitted no native diagnostic. The prior 4/7 full Windows runs with diagnostics remain unrefuted; no five-process full-suite acceptance sample was run. | **BLOCKED** |
+| TestClient/session ownership | Baseline scheduling fixture had 32 SQL operations per run on a thread different from the connection's active checkout thread. Refreshing and detaching the fixture's expired user removed all mismatches in three repeated treatment runs; concurrent DBAPI cursor operations remained zero. | **VERIFIED test-fixture invariant only; native-fault causality unproven** |
+| Teardown leak assertions | Deliberate negative control failed before `drop_all()` with one checked-out connection and one active session; correct fixture teardown observed none. | **PASS — assertion validation** |
+| Background work | Upload/vertical-slice selection: 13 tests; three background tasks completed, no task errors or teardown leaks. | **PASS — bounded selection only** |
+| Backend Ruff | Full `ruff check app tests` | **PASS** |
+| Backend focused tests | Scheduling contract: 20 passed; anomaly+scheduling instrumented selection: 25 passed. | **PASS — focused** |
+| PostgreSQL migration cycle | Disposable PostgreSQL 16 upgrade to `d1e2f3a4b5c6`, downgrade to base (zero revision rows), and re-upgrade passed. | **PASS — migration round trip** |
+| Redis/RQ | Disposable Redis 7 `PING`; RQ `SimpleWorker` executed the actual automation-task function and completed the expected not-found job against a disposable SQLite schema. | **PASS — in-process worker smoke** |
+| Authenticated API | Disposable migrated SQLite: registration, login, `/auth/me`, and authenticated `/meters` all succeeded. | **PASS — core journey** |
+| Mobile lint / TypeScript / Expo Doctor / web export | All four checks rerun; export output was outside the repository. | **PASS** |
+| npm audits | Full tree: 14 moderate, zero high/critical; production tree: zero advisories. | **PARTIAL — development-only risk remains open** |
+| Automation modal browser retest | Integrated browser connection timed out before opening a page. Previous Prompt 23B interaction evidence remains; no fresh interaction was executed. | **NOT RE-VERIFIED in Prompt 23C** |
+| Hosted CI / clean source checkpoint | Not run / not reproduced from a clean Git clone. | **BLOCKED** |
+
+Prompt 23C corrected the scheduling test fixture by refreshing and expunging
+the test `User` before returning it through a dependency override; the fixture
+asserts `object_session(user) is None`. This prevents its expired ORM state
+from causing a worker-thread lazy load through the setup session. This is a
+test-lifecycle correction and is **not** claimed as the Windows native-fault
+repair.
+
+The 25-node controlled selection fingerprint was
+`5a56558f0f5698d8b55feadd46400862c6c97ecac14ed1e37a273cc889a7072f`.
+The result does not qualify as a full-suite stability acceptance run. The
+current exact source candidate inventory is 106 tracked modified paths plus
+55 untracked source/documentation paths; generated Graphify output and five
+legacy `backend/file*` artifacts remain excluded and preserved. No paths were
+staged, committed, pushed, reset, or deleted. **Windows stability remains
+BLOCKED; Prompt 24 should not begin.**
+
+## Prompt 23D full-suite comparison — 2 November 2026
+
+The full report is
+[PROMPT23D_FULL_SUITE_COMPARISON.md](backend/docs/stage1/PROMPT23D_FULL_SUITE_COMPARISON.md).
+The original and corrected scheduling fixtures were tested in isolated
+source copies with the same CPython 3.11.9, SQLite 3.45.1, dependency lock,
+fd capture, and 265-node collection fingerprint
+`e5213d53b7243e2d75cdd18cf22e3dbd82e55669c0e10477c4d9e343f602f1ef`.
+The original fixture emitted no diagnostic in five complete runs; the
+corrected fixture emitted a diagnostic in four of five processes. One
+corrected run additionally exposed a Windows active-marker replace/read
+race in the test harness and stopped after 263 passes; this separate
+harness defect has been corrected. The result does not establish that the
+fixture correction caused or increased the access-violation rate, but it
+demonstrates that the correction does not eliminate the fault.
+
+Faulthandler stacks in three corrected runs correlated the diagnostic with
+SQLAlchemy SQLite table reflection during the scheduling fixture's
+`MetaData.drop_all()` teardown. A matched 23-test lifecycle-instrumented
+comparison did not reproduce the fault and observed zero checkout-thread
+mismatches, concurrent DBAPI operations, or teardown leaks in either arm.
+The timing-sensitive native mechanism remains unknown.
+
+One clean source-only copy reproduced 265 backend tests (12 warnings),
+full backend Ruff, SQLite Alembic upgrade/current/downgrade/re-upgrade,
+mobile clean install, lint, TypeScript, Expo Doctor (20/20), and web export.
+The same clean copy reported 14 moderate development-tool audit findings
+and zero production advisories. This local copy is not a hosted CI run or a
+Git-created clean clone.
+
+| Gate | Prompt 23D evidence | Classification |
+|---|---|---|
+| Windows SQLite native stability | Baseline 0/5 diagnostics; corrected 4/5. Updated-harness clean-copy run: 0/1. | **BLOCKED — no verified fix** |
+| Test-principal ownership | Detached-principal assertion retained; no additional expired/attached ORM override confirmed. | **PASS for known fixture invariant only** |
+| Backend Ruff / full suite | Clean copy: Ruff passed; 265 passed, 12 warnings. | **PASS for this run** |
+| SQLite migrations | Upgrade to `d1e2f3a4b5c6`, downgrade to base, re-upgrade passed. | **PASS** |
+| Mobile lint / TypeScript / Expo Doctor / web export | Clean `npm ci`; all checks passed, Expo Doctor 20/20. | **PASS** |
+| npm audits | Full: 14 moderate; production-only: zero. | **PARTIAL — development risk remains open** |
+| Hosted CI and token permissions | No hosted run; workflow has no explicit `permissions:` declaration. | **NOT VERIFIED / OPEN** |
+| Source checkpoint | Local source-only copy passed; no Git-created clean clone and no staging. | **PARTIAL** |
+
+The exact staging candidate inventory is refreshed in
+[STAGE1_SOURCE_CHECKPOINT_PLAN.md](STAGE1_SOURCE_CHECKPOINT_PLAN.md). The
+five legacy `backend/file*` artifacts remain preserved with historical
+provenance unresolved. No source was staged, committed, pushed, reset,
+cleaned, or deleted. Overall status is **PARTIAL / BLOCKED**; Prompt 24
+should not begin.
+
+## Prompt 23E baseline additions
+
+- Restricted PostgreSQL (`gridsense-it-pg16-23e`, PG 16.13, port 55433, role `gs_it_23e` non-superuser): 35 passed, 0 skipped, in 3 runs before and 3 after the lint fix, plus Linux container 35/35. Status: PASS.
+- SQLite non-integration suite: 275 passed on Linux container and on Windows from a clean copy of the kept source set. Status: PASS for those runs. Windows native fault remains BLOCKED.
+- Targeted NEM12 source-time tests: 85 passed (interval, billing, usage analyzer, NEM12 parser).
+- Alembic upgrade/downgrade/re-upgrade (head `d1e2f3a4b5c6`) on a disposable DB: PASS.
+- Redis 7.4.8 PONG and RQ job result 5: PASS.
+- Backend `ruff check app tests`: PASS. Mobile lint, typecheck, expo-doctor 20/20, web export: PASS.
+- npm audit: full 14 moderate (dev-only), production 0 — accepted residual risk.
+- pip-audit gate on locked deps: BLOCKED (85 vulnerabilities, 15 packages).
+- Hosted CI: NOT VERIFIED.
+- Hang investigation: not reproduced in 5 bounded runs. Historical evidence retained.
+
+Overall: **PARTIAL / BLOCKED**. Prompt 24 should not begin.
+
+## Security-remediation verification (Prompt 23E-Security)
+
+- Adopted lock `backend/requirements-dev.lock` (SHA256 6A1DE8A5...8997069; 158 pins; hash-locked; Python 3.11 universal).
+- Full backend suite: Windows 320 passed / 24 skipped; Linux `python:3.11-slim` 320 passed / 24 skipped (`files/prompt23e-security/linux/full-linux-run-1.txt`). Skips are the PostgreSQL integration tests, which run only when the URL is set.
+- Restricted PostgreSQL integration: Windows 35 passed (`pg-windows-run-1.txt`); Linux 35 passed (`linux/pg-linux-run-1.txt`), role `gs_it_23e`, no superuser bypass.
+- Alembic: upgrade head, downgrade base, upgrade head, all exit 0 on a disposable schema, dropped afterwards.
+- Redis/RQ: job enqueued, worker executed it, status FINISHED, result 5 (`linux/redis-rq-run-1.txt`).
+- Windows native SQLite harness: 4 runs. Runs 1, 3 and 4 clean. Run 2 `Native diagnostic: YES`, exit 1. Remains BLOCKED.
+- Hang (`test_synthetic_tou_demo_uses_cheaper_start_and_reports_real_tradeoff`): not reproduced in this pass; historical evidence retained.
+- Hosted CI: NOT VERIFIED.
+- Details: [PROMPT23E_SECURITY_REMEDIATION.md](/C:/Users/Kanad/Desktop/PROJECTS/GridSense/backend/docs/stage1/PROMPT23E_SECURITY_REMEDIATION.md).
+
+## Prompt 23E-Security final sign-off (Task A–D)
+
+- Clean-copy results (314-file manifest, Python 3.11 slim container): Ruff passed; no-PostgreSQL suite 331 passed, 24 skipped; restricted PostgreSQL 355 passed, 0 skipped.
+- Hosted CI: NOT VERIFIED. Windows SQLite: BLOCKED and explicitly unsupported.
+- Superseded counts from earlier passes (265, 275, 320/24) are retained for history only.
+- Overall: **PARTIAL**. Prompt 24 must not begin.

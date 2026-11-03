@@ -1,0 +1,82 @@
+{
+  "generator": "python-jose 3.5.0",
+  "fixture_key_label": "synthetic-legacy-v1",
+  "cases": [
+    {
+      "name": "access_str_sub",
+      "algorithm": "HS256",
+      "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI0MiIsInR5cGUiOiJhY2Nlc3MiLCJleHAiOjQxMDI0NDQ4MDB9.f56uPpQX8KVHQqN8om2oCaendJMnML7mTEQSufqn_AM",
+      "python_jose_verdict": {
+        "accepted": true,
+        "sub": "42",
+        "sub_type": "str"
+      }
+    },
+    {
+      "name": "refresh_str_sub",
+      "algorithm": "HS256",
+      "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI0MiIsInR5cGUiOiJyZWZyZXNoIiwiZXhwIjo0MTAyNDQ0ODAwLCJpYXQiOjE3NjcyMjU2MDAsImp0aSI6ImZpeHR1cmUtcmVmcmVzaC0wMDAxIn0.oYKA3nK-yWuAiTxLBr1Rw9b6E_RWON1oWx_U80bFF3k",
+      "python_jose_verdict": {
+        "accepted": true,
+        "sub": "42",
+        "sub_type": "str"
+      }
+    },
+    {
+      "name": "access_without_type",
+      "algorithm": "HS256",
+      "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI0MiIsImV4cCI6NDEwMjQ0NDgwMH0.B-cYGHS8h9cQEPgcrmz_1aC7NVbu7kGtbi-twXUEpwQ",
+      "python_jose_verdict": {
+        "accepted": true,
+        "sub": "42",
+        "sub_type": "str"
+      }
+    },
+    {
+      "name": "access_int_sub",
+      "algorithm": "HS256",
+      "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOjQyLCJ0eXBlIjoiYWNjZXNzIiwiZXhwIjo0MTAyNDQ0ODAwfQ.6826gAlxmedAJGdcwyn2Q0voam41Obdmr_U168obci0",
+      "python_jose_verdict": {
+        "accepted": false,
+        "error": "JWTClaimsError"
+      }
+    },
+    {
+      "name": "refresh_int_sub",
+      "algorithm": "HS256",
+      "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOjQyLCJ0eXBlIjoicmVmcmVzaCIsImV4cCI6NDEwMjQ0NDgwMCwiaWF0IjoxNzY3MjI1NjAwLCJqdGkiOiJmaXh0dXJlLXJlZnJlc2gtMDAwMiJ9.gnrhnhNZAYhfaqKWScU2Ps1Qg5pfRKhwwJ5skj1qMhs",
+      "python_jose_verdict": {
+        "accepted": false,
+        "error": "JWTClaimsError"
+      }
+    },
+    {
+      "name": "access_expired",
+      "algorithm": "HS256",
+      "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI0MiIsInR5cGUiOiJhY2Nlc3MiLCJleHAiOjk3ODMwNzIwMH0.GagiCYDgkehB3VVdO2IRZjaPh6XBw-cEhkKO-QQ9uLg",
+      "python_jose_verdict": {
+        "accepted": false,
+        "error": "ExpiredSignatureError"
+      }
+    },
+    {
+      "name": "access_hs512",
+      "algorithm": "HS512",
+      "token": "eyJhbGciOiJIUzUxMiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI0MiIsInR5cGUiOiJhY2Nlc3MiLCJleHAiOjQxMDI0NDQ4MDB9.0cNueR_jOZ-O5oCIOtxCgZH7e3T-aPhm09vn_kTujDiwPADku_eWyehTlRsgtUoPNPPw27ods977R-lGJr9qMg",
+      "python_jose_verdict": {
+        "accepted": false,
+        "error": "JWTError"
+      }
+    },
+    {
+      "name": "access_missing_sub",
+      "algorithm": "HS256",
+      "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0eXBlIjoiYWNjZXNzIiwiZXhwIjo0MTAyNDQ0ODAwfQ.4NAB-GAAXYMxqc6_AcOyzNKXakk__o4u1h3afoXLls0",
+      "python_jose_verdict": {
+        "accepted": true,
+        "sub": null,
+        "sub_type": "NoneType"
+      }
+    }
+  ]
+}

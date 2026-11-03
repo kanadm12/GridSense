@@ -1,46 +1,49 @@
 """Tests for ML module: ETL, training, and prediction."""
 
-import pytest
-from datetime import date, datetime, timedelta
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
+from datetime import date, timedelta
 
-from app.database import get_db
+import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.engine import Engine
+from sqlalchemy.orm import Session, sessionmaker
+
+from app.ml.etl import extract_daily_series
+from app.models.aggregate import DailyAggregate
 from app.models.base import Base
 from app.models.meter import Meter
-from app.models.reading import Reading
 from app.models.user import User
-from app.models.aggregate import DailyAggregate
-from app.ml.etl import extract_daily_series
 from app.services.auth import AuthService
 
-
-# Test database setup (shared in-memory)
-SQLALCHEMY_TEST_DATABASE_URL = "sqlite:///file:tests_db_ml?mode=memory&cache=shared"
-engine = create_engine(
-    SQLALCHEMY_TEST_DATABASE_URL, connect_args={"check_same_thread": False, "uri": True}
-)
-TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+engine: Engine
+testing_session_local: sessionmaker[Session]
 
 
 @pytest.fixture(autouse=True)
-def setup_database():
-    Base.metadata.create_all(bind=engine)
-    yield
-    Base.metadata.drop_all(bind=engine)
+def setup_database(tmp_path):
+    global engine, testing_session_local
+    engine = create_engine(f"sqlite:///{tmp_path / 'ml.sqlite3'}")
+    testing_session_local = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    try:
+        Base.metadata.create_all(bind=engine)
+        yield
+    finally:
+        Base.metadata.drop_all(bind=engine)
+        engine.dispose()
 
 
 @pytest.fixture
 def db_with_data():
     """Create test DB with sample daily aggregate data."""
-    db = TestingSessionLocal()
-    
+    db = testing_session_local()
+
     # Create user and meter
-    user = User(email="ml@test.com", hashed_password=AuthService.hash_password("pass"), full_name="ML Test")
+    user = User(
+        email="ml@test.com", hashed_password=AuthService.hash_password("pass"), full_name="ML Test"
+    )
     db.add(user)
     db.commit()
     db.refresh(user)
-    
+
     meter = Meter(
         user_id=user.id,
         nmi="1234567890",
@@ -50,7 +53,7 @@ def db_with_data():
     db.add(meter)
     db.commit()
     db.refresh(meter)
-    
+
     # Add sample daily aggregates (30 days)
     base_date = date(2025, 4, 1)
     for i in range(30):
@@ -63,7 +66,7 @@ def db_with_data():
         )
         db.add(agg)
     db.commit()
-    
+
     yield db
     db.close()
 
@@ -72,7 +75,7 @@ def test_extract_daily_series(db_with_data):
     """Test ETL extraction of daily time-series."""
     meter = db_with_data.query(Meter).first()
     df = extract_daily_series(db_with_data, meter.id)
-    
+
     assert not df.empty
     assert len(df) == 30
     assert "ds" in df.columns
@@ -83,6 +86,8 @@ def test_extract_daily_series(db_with_data):
 def test_extract_daily_series_with_date_filter(db_with_data):
     """Test extraction with date filtering."""
     meter = db_with_data.query(Meter).first()
-    df = extract_daily_series(db_with_data, meter.id, start_date="2025-04-10", end_date="2025-04-20")
-    
+    df = extract_daily_series(
+        db_with_data, meter.id, start_date="2025-04-10", end_date="2025-04-20"
+    )
+
     assert len(df) == 11  # 10-20 inclusive

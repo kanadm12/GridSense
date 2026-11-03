@@ -3,19 +3,18 @@
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
-
-from app.rate_limit import limiter
 
 from app.api import (
     auth_router,
     automation_router,
     billing_router,
     chat_router,
+    context_router,
     insights_router,
     meters_router,
     notifications_router,
@@ -26,15 +25,15 @@ from app.api import (
     upload_router,
     usage_router,
 )
-from app.api.health import router as health_router
 from app.api.errors import (
-    http_exception_handler,
-    validation_exception_handler,
     general_exception_handler,
+    validation_exception_handler,
 )
+from app.api.health import router as health_router
 from app.config import get_settings
-from app.logging_config import setup_logging, get_logger
+from app.logging_config import get_logger, setup_logging
 from app.middleware import LoggingMiddleware
+from app.rate_limit import limiter
 
 settings = get_settings()
 
@@ -110,6 +109,7 @@ app.include_router(notifications_router, prefix=settings.api_v1_prefix)
 app.include_router(automation_router, prefix=settings.api_v1_prefix)
 app.include_router(scheduling_router, prefix=settings.api_v1_prefix)
 app.include_router(chat_router, prefix=settings.api_v1_prefix)
+app.include_router(context_router, prefix=settings.api_v1_prefix)
 app.include_router(insights_router, prefix=settings.api_v1_prefix)
 
 

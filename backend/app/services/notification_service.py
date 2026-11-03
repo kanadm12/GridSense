@@ -95,7 +95,7 @@ class NotificationService:
         # Get user's push tokens
         tokens = (
             self.db.query(PushToken)
-            .filter(PushToken.user_id == user_id, PushToken.is_active == True)
+            .filter(PushToken.user_id == user_id, PushToken.is_active.is_(True))
             .all()
         )
 
@@ -167,6 +167,6 @@ class NotificationService:
         """Get count of unread notifications for a user."""
         return (
             self.db.query(Notification)
-            .filter(Notification.user_id == user_id, Notification.is_read == False)
+            .filter(Notification.user_id == user_id, Notification.is_read.is_(False))
             .count()
         )

@@ -1,6 +1,6 @@
 """Usage data endpoints."""
 
-from datetime import date, timedelta
+from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
@@ -8,7 +8,6 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_user
 from app.api.ownership import verify_meter_ownership
 from app.database import get_db
-from app.models.meter import Meter
 from app.models.user import User
 from app.schemas.usage import DailyUsage, HourlyUsage, UsageSummary, WeeklyUsage
 from app.services.usage_analyzer import UsageAnalyzer

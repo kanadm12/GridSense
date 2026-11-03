@@ -7,7 +7,6 @@ from typing import Optional
 import joblib
 import pandas as pd
 
-
 MODEL_DIR = os.path.join(os.path.dirname(__file__), "..", "models")
 
 
@@ -57,8 +56,8 @@ def detect_anomalies(meter_id: int, df: pd.DataFrame) -> Optional[dict]:
     if clf is None or df.empty:
         return None
     try:
-        X = df[["y"]].to_numpy()
-        preds = clf.predict(X)
+        values = df[["y"]].to_numpy()
+        preds = clf.predict(values)
         anomaly_indices = [i for i, p in enumerate(preds) if p == -1]
         return {
             "anomaly_dates": df.iloc[anomaly_indices]["ds"].astype(str).tolist(),

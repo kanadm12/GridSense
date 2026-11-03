@@ -9,7 +9,6 @@ from app.config import get_settings
 from app.database import get_db
 from app.schemas.auth import (
     RefreshTokenRequest,
-    Token,
     TokenWithRefresh,
     UserCreate,
     UserLogin,
@@ -81,16 +80,16 @@ async def login(
 async def refresh_token(request: RefreshTokenRequest) -> TokenWithRefresh:
     """Refresh access token using a valid refresh token."""
     result = AuthService.refresh_access_token(request.refresh_token)
-    
+
     if not result:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired refresh token",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    
+
     access_token, new_refresh_token = result
-    
+
     return TokenWithRefresh(
         access_token=access_token,
         refresh_token=new_refresh_token,
@@ -108,6 +107,5 @@ async def get_current_user_info(
     ),
 ) -> UserResponse:
     """Get the current user's information."""
-    from app.api.deps import get_current_user
 
     return current_user

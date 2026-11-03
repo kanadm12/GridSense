@@ -14,7 +14,6 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Spacing, FontSize, BorderRadius } from '@/constants/theme';
-import { useAuthStore } from '@/stores';
 import api from '@/services/api';
 
 interface Message {
@@ -36,19 +35,12 @@ export default function ChatScreen() {
   const [inputText, setInputText] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [quickActions, setQuickActions] = useState<QuickAction[]>([]);
-  const [greeting, setGreeting] = useState('');
   const [sessionId, setSessionId] = useState<number | null>(null);
   const flatListRef = useRef<FlatList>(null);
 
-  // Fetch welcome message and quick actions
-  useEffect(() => {
-    fetchWelcome();
-  }, []);
-
-  const fetchWelcome = async () => {
+  const fetchWelcome = useCallback(async () => {
     try {
       const response = await api.get('/chat/welcome');
-      setGreeting(response.data.greeting);
       setQuickActions(response.data.quick_actions);
       
       // Add welcome message
@@ -60,9 +52,15 @@ export default function ChatScreen() {
       }]);
     } catch (error) {
       console.error('Failed to fetch welcome:', error);
-      setGreeting("Hi! I'm your energy assistant. How can I help?");
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => {
+      void fetchWelcome();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [fetchWelcome]);
 
   const sendMessage = useCallback(async (text: string) => {
     if (!text.trim() || isLoading) return;
@@ -113,7 +111,7 @@ export default function ChatScreen() {
     } finally {
       setIsLoading(false);
     }
-  }, [messages, isLoading]);
+  }, [messages, isLoading, sessionId]);
 
   const handleQuickAction = (action: QuickAction) => {
     sendMessage(action.prompt);

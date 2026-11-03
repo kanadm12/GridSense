@@ -1,6 +1,6 @@
 """Insights API endpoints for forecasting and anomaly detection."""
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
@@ -137,8 +137,6 @@ async def get_daily_brief(
     """
     meter = _get_user_meter(db, current_user.id, meter_id)
     analyzer = UsageAnalyzer(db)
-    forecaster = get_forecaster(db)
-
     # Get time-based greeting
     hour = datetime.now().hour
     if hour < 12:
@@ -148,113 +146,117 @@ async def get_daily_brief(
     else:
         greeting = "Good evening!"
 
-    # Get yesterday's usage
-    from datetime import timedelta
+    # Compare complete days only, matching yesterday to the same weekday.
     yesterday = date.today() - timedelta(days=1)
 
     try:
-        daily_usage = analyzer.get_daily_usage(
+        yesterday_rows = analyzer.get_daily_usage(
             meter_id=meter.id,
             start_date=yesterday,
             end_date=yesterday,
             limit=1,
         )
-
-        if daily_usage:
-            yesterday_kwh = daily_usage[0].total_kwh
-            yesterday_cost = daily_usage[0].estimated_cost
-        else:
-            yesterday_kwh = 0.0
-            yesterday_cost = None
-
-        # Get 30-day average for comparison
-        thirty_days_ago = date.today() - timedelta(days=30)
-        monthly_usage = analyzer.get_daily_usage(
-            meter_id=meter.id,
-            start_date=thirty_days_ago,
-            end_date=date.today() - timedelta(days=1),
-            limit=30,
+        yesterday_row = yesterday_rows[0] if yesterday_rows else None
+        yesterday_eligible = bool(
+            yesterday_row is not None
+            and yesterday_row.coverage_status == "complete"
+            and yesterday_row.provenance_status == "measured"
+            and yesterday_row.unresolved_direction_count == 0
+            and yesterday_row.legacy_direction_unverified_count == 0
+        )
+        yesterday_kwh = yesterday_row.observed_eligible_kwh if yesterday_eligible else None
+        yesterday_cost = (
+            yesterday_row.estimated_cost
+            if yesterday_eligible and yesterday_row is not None
+            else None
         )
 
-        if monthly_usage:
-            avg_daily = sum(d.total_kwh for d in monthly_usage) / len(monthly_usage)
-            comparison = ((yesterday_kwh - avg_daily) / avg_daily * 100) if avg_daily > 0 else 0
-        else:
-            avg_daily = yesterday_kwh
-            comparison = 0.0
+        prior_same_weekdays = analyzer.get_daily_usage(
+            meter_id=meter.id,
+            start_date=yesterday - timedelta(days=28),
+            end_date=yesterday - timedelta(days=7),
+            limit=28,
+        )
+        weekday_baseline = [
+            row
+            for row in prior_same_weekdays
+            if row.date.weekday() == yesterday.weekday()
+            and row.coverage_status == "complete"
+            and row.provenance_status == "measured"
+            and row.unresolved_direction_count == 0
+            and row.legacy_direction_unverified_count == 0
+        ]
+        comparison = None
+        if yesterday_kwh is not None and len(weekday_baseline) == 4:
+            baseline_average = sum(row.observed_eligible_kwh for row in weekday_baseline) / 4
+            if baseline_average > 0:
+                comparison = (yesterday_kwh - baseline_average) / baseline_average * 100
 
         # Generate insights
         insights = []
 
-        # Usage comparison insight
-        if comparison < -10:
+        # Descriptive comparison only; it does not explain why usage changed.
+        if comparison is not None and comparison < -10:
             insights.append(Insight(
-                type=InsightType.ACHIEVEMENT,
-                title="Great job!",
-                message=f"Yesterday's usage was {abs(comparison):.0f}% below your average!",
-                icon="trophy",
+                type=InsightType.USAGE_PATTERN,
+                title="Lower use than matched weekdays",
+                message=(
+                    f"Yesterday's eligible import was {abs(comparison):.0f}% below "
+                    "the average of four complete prior same-weekday observations."
+                ),
+                icon="trending-down",
             ))
-        elif comparison > 20:
+        elif comparison is not None and comparison > 20:
             insights.append(Insight(
-                type=InsightType.COST_ALERT,
-                title="High usage detected",
-                message=f"Yesterday was {comparison:.0f}% above your average.",
-                action="Check if any appliances were left on",
-                icon="alert-triangle",
+                type=InsightType.USAGE_PATTERN,
+                title="Higher use than matched weekdays",
+                message=(
+                    f"Yesterday's eligible import was {comparison:.0f}% above "
+                    "the average of four complete prior same-weekday observations. "
+                    "This does not identify a cause."
+                ),
+                action=(
+                    "Compare the interval record with your own notes; aggregate "
+                    "readings do not identify appliances."
+                ),
+                icon="trending-up",
             ))
-
-        # Time-based tip
-        weekday = datetime.now().weekday()
-        if weekday < 5:  # Weekday
-            if hour < 15:
-                insights.append(Insight(
-                    type=InsightType.TIP,
-                    title="Off-peak opportunity",
-                    message=(
-                        "Peak pricing starts at 3pm. Now is a good time to run "
-                        "the dishwasher or laundry!"
-                    ),
-                    impact_dollars=0.20,
-                    icon="clock",
-                ))
-            elif 15 <= hour < 21:
-                insights.append(Insight(
-                    type=InsightType.TIP,
-                    title="Peak hours now",
-                    message="You're in peak pricing (3-9pm). Delay heavy appliances if possible.",
-                    icon="zap",
-                ))
         else:
             insights.append(Insight(
-                type=InsightType.SAVINGS_OPPORTUNITY,
-                title="Weekend off-peak",
+                type=InsightType.USAGE_PATTERN,
+                title="Weekday comparison unavailable",
                 message=(
-                    "It's the weekend - all-day off-peak rates! Great time for "
-                    "energy-intensive tasks."
+                    "A comparison needs a fully covered measured day yesterday "
+                    "and four fully covered measured observations from the same weekday."
                 ),
-                icon="sun",
+                icon="information-circle",
             ))
 
-        # Get forecast message
-        try:
-            forecast = forecaster.forecast_monthly_bill(meter.id)
-            forecast_msg = (
-                f"Projected usage this month: {forecast['projected_total_kwh']:.0f} kWh. "
-                "Cost projection is unavailable without tariff-backed pricing."
-            )
-        except Exception:
-            forecast_msg = None
+        insights.append(Insight(
+            type=InsightType.TIP,
+            title="Check your confirmed tariff",
+            message=(
+                "Retailer time windows differ. Review your confirmed tariff and "
+                "the appliance's requirements before deciding whether to shift a task."
+            ),
+            icon="information-circle",
+        ))
 
         return DailyBrief(
             date=str(date.today()),
             greeting=greeting,
-            yesterday_usage_kwh=round(yesterday_kwh, 2),
+            yesterday_usage_kwh=(
+                round(yesterday_kwh, 3) if yesterday_kwh is not None else None
+            ),
             yesterday_cost=(
                 round(yesterday_cost, 2) if yesterday_cost is not None else None
             ),
-            comparison_to_average=round(comparison, 1),
+            comparison_to_average=round(comparison, 1) if comparison is not None else None,
             insights=insights,
-            forecast_message=forecast_msg,
+            forecast_message=(
+                "Forecast-dependent advice is unavailable until chronological "
+                "held-out evaluation meets its acceptance criteria."
+            ),
         )
 
     except Exception as e:

@@ -4,26 +4,31 @@ NEM12 is a CSV-based format used in Australia's National Electricity Market (NEM
 File structure:
 - Record 100: Header (version info)
 - Record 200: NMI Data Details (meter info)
-- Record 300: Interval Data (actual readings)
+- Record 300: Interval Data (quality may be actual, estimated, substituted, or variable)
 - Record 400: Interval Event (quality flags)
 - Record 500: B2B Details (not used for consumption)
 - Record 900: End of data
 
-Reference: AEMO MDFF Specification
+Reference: AEMO MDFF NEM12/NEM13 v2.7, effective 1 December 2025. Verified
+format clauses and remaining procedure blockers are in
+backend/docs/stage1/AEMO_NEM12_COMPLIANCE_MATRIX.md.
 
-NEM12 timestamps are preserved as naive fixed-market-time (UTC+10) interval ends.
-Local civil-time consumers convert them explicitly using the associated meter timezone.
+The parser preserves the interval date/position as a naive nominal interval end
+and records NMI configuration and data-stream identifiers. MDFF v2.7 verifies
+the nominal position; the source clock basis remains unverified.
 
 Timezone contract
 -----------------
-The parser preserves record 300 interval-end wall-clock values in fixed market time
-(AEST, UTC+10), represented as naive datetimes. It does not adjust them for local DST.
-Consumers convert these source timestamps to the meter's IANA timezone explicitly.
-Each parsed reading also stores its interval length for exact boundary calculations.
+The parser preserves record 300's source IntervalDate and 1-based position,
+deriving a naive nominal interval-end coordinate. It does not claim that the
+coordinate is UTC or has a verified timezone/DST realization. Each reading
+stores its source unit/value and an unverified clock-basis marker; consumers
+must withhold UTC-dependent metrics until related procedures are confirmed.
 """
 
 import csv
 import io
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import BinaryIO, TextIO
@@ -36,12 +41,26 @@ class NEM12MeterData:
     """Parsed meter data from NEM12 file."""
 
     nmi: str
+    nmi_configuration: str | None = None
     register_id: str | None = None
     meter_serial: str | None = None
     suffix: str | None = None
+    mdm_data_stream_identifier: str | None = None
     unit_of_measure: str = "kWh"
     interval_minutes: int = 30
     readings: list[ReadingBulkCreate] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class IntervalQualityEvent:
+    """Parsed 400-record quality range."""
+
+    start_interval: int
+    end_interval: int
+    quality_method: str
+    reason_code: str | None
+    reason_description: str | None
+    line_num: int
 
 
 @dataclass
@@ -58,6 +77,7 @@ class NEM12Parser:
     """Parser for NEM12 format smart meter data files."""
 
     QUALITY_UNKNOWN = "U"
+    SOURCE_TIME_BASIS_UNVERIFIED = "unverified_nem12_clock_basis"
 
     def __init__(self):
         self.errors: list[str] = []
@@ -74,11 +94,14 @@ class NEM12Parser:
         """
         self.errors = []
         self.warnings = []
-        meters: dict[str, NEM12MeterData] = {}  # keyed by NMI+suffix
-        interval_dates: dict[str, list[datetime]] = {}
-        current_meter_key: str | None = None
+        meters: dict[tuple[str, ...], NEM12MeterData] = {}
+        interval_dates: dict[tuple[str, ...], list[datetime]] = {}
+        current_meter_key: tuple[str, ...] | None = None
+        current_nmi_configuration: str | None = None
+        current_unit_of_measure = "kWh"
         current_interval_length: int = 30
         current_interval_readings: list[ReadingBulkCreate] = []
+        current_interval_events: list[IntervalQualityEvent] = []
         total_readings = 0
 
         # Handle different input types
@@ -94,6 +117,14 @@ class NEM12Parser:
                 continue
 
             record_type = row[0].strip()
+            if current_interval_readings and record_type != "400":
+                self._apply_interval_events(
+                    current_interval_readings,
+                    current_interval_events,
+                    current_interval_length,
+                )
+                current_interval_readings = []
+                current_interval_events = []
 
             try:
                 if record_type == "100":
@@ -102,16 +133,19 @@ class NEM12Parser:
 
                 elif record_type == "200":
                     # NMI data details - meter info
+                    current_meter_key = None
                     meter_data, key = self._parse_nmi_details(row, line_num)
                     if meter_data:
-                        meters[key] = meter_data
+                        meters.setdefault(key, meter_data)
                         current_meter_key = key
+                        current_nmi_configuration = meter_data.nmi_configuration
+                        current_unit_of_measure = meter_data.unit_of_measure
                         current_interval_length = meter_data.interval_minutes
-                        current_interval_readings = []
-                        if meter_data.unit_of_measure.casefold() not in {"kwh", "wh"}:
+                        if current_unit_of_measure.casefold() not in {"kwh", "wh"}:
                             self.warnings.append(
-                                f"Line {line_num}: Unsupported UOM '{meter_data.unit_of_measure}' "
-                                "for kWh analytics; interval values will be omitted"
+                                f"Line {line_num}: Unsupported UOM "
+                                f"'{current_unit_of_measure}' for kWh analytics; "
+                                "interval values will be retained but ineligible"
                             )
 
                 elif record_type == "300":
@@ -121,31 +155,52 @@ class NEM12Parser:
                             row,
                             line_num,
                             current_interval_length,
-                            meters[current_meter_key].unit_of_measure,
+                            current_unit_of_measure,
+                            current_nmi_configuration,
                         )
                         if interval_date is not None:
                             interval_dates.setdefault(current_meter_key, []).append(interval_date)
                         meters[current_meter_key].readings.extend(readings)
                         current_interval_readings = readings
+                        current_interval_events = []
                         total_readings += len(readings)
                     else:
                         self.errors.append(f"Line {line_num}: Interval data without NMI context")
 
                 elif record_type == "400":
                     if current_meter_key and current_meter_key in meters:
-                        self._parse_interval_event(
+                        event = self._parse_interval_event(
                             row,
                             line_num,
                             current_interval_length,
-                            current_interval_readings,
+                        )
+                        if event is not None:
+                            current_interval_events.append(event)
+                    else:
+                        self.errors.append(
+                            f"Line {line_num}: Interval event without a preceding interval record"
                         )
 
                 elif record_type == "900":
+                    if current_interval_readings:
+                        self._apply_interval_events(
+                            current_interval_readings,
+                            current_interval_events,
+                            current_interval_length,
+                        )
+                        current_interval_readings = []
                     # End of data
                     break
 
             except Exception as e:
                 self.errors.append(f"Line {line_num}: Parse error - {str(e)}")
+
+        if current_interval_readings:
+            self._apply_interval_events(
+                current_interval_readings,
+                current_interval_events,
+                current_interval_length,
+            )
 
         for key, dates in interval_dates.items():
             days = sorted({interval_date.date() for interval_date in dates})
@@ -190,7 +245,7 @@ class NEM12Parser:
 
     def _parse_nmi_details(
         self, row: list[str], line_num: int
-    ) -> tuple[NEM12MeterData | None, str]:
+    ) -> tuple[NEM12MeterData | None, tuple[str, ...]]:
         """Parse record 200 (NMI data details).
 
         Format: 200,NMI,NMIConfiguration,RegisterID,NMISuffix,MDMDataStreamIdentifier,
@@ -201,8 +256,10 @@ class NEM12Parser:
             return None, ""
 
         nmi = row[1].strip()
+        nmi_configuration = row[2].strip() if len(row) > 2 else ""
         register_id = row[3].strip() if len(row) > 3 else ""
         suffix = row[4].strip() if len(row) > 4 else ""
+        mdm_data_stream_identifier = row[5].strip() if len(row) > 5 else ""
         meter_serial = row[6].strip() if len(row) > 6 else None
         uom = row[7].strip() if len(row) > 7 else "kWh"
         interval_str = row[8].strip() if len(row) > 8 else "30"
@@ -215,27 +272,37 @@ class NEM12Parser:
         try:
             interval_minutes = int(interval_str)
             if interval_minutes not in (5, 15, 30):
-                self.warnings.append(
-                    f"Line {line_num}: Unsupported interval length {interval_minutes}, "
-                    "defaulting to 30"
+                self.errors.append(
+                    f"Line {line_num}: Unsupported interval length {interval_minutes}; "
+                    "record not parsed"
                 )
-                interval_minutes = 30
+                return None, ()
         except ValueError:
-            interval_minutes = 30
-            self.warnings.append(f"Line {line_num}: Invalid interval length, defaulting to 30")
+            self.errors.append(
+                f"Line {line_num}: Missing or invalid interval length; record not parsed"
+            )
+            return None, ()
 
-        key = f"{nmi}_{register_id}_{suffix}"
+        key = (
+            nmi,
+            register_id,
+            suffix,
+            mdm_data_stream_identifier,
+        )
         self.warnings.append(
-            f"Line {line_num}: Direction is unresolved for RegisterID '{register_id}' "
-            f"and NMISuffix '{suffix}'"
+            f"Line {line_num}: Direction is unresolved for NMIConfiguration "
+            f"'{nmi_configuration}', RegisterID '{register_id}', NMISuffix '{suffix}', "
+            f"and MDMDataStreamIdentifier '{mdm_data_stream_identifier}'"
         )
 
         return (
             NEM12MeterData(
                 nmi=nmi,
+                nmi_configuration=nmi_configuration or None,
                 register_id=register_id or None,
                 meter_serial=meter_serial,
                 suffix=suffix,
+                mdm_data_stream_identifier=mdm_data_stream_identifier or None,
                 unit_of_measure=uom,
                 interval_minutes=interval_minutes,
             ),
@@ -248,6 +315,7 @@ class NEM12Parser:
         line_num: int,
         interval_minutes: int,
         unit_of_measure: str = "kWh",
+        nmi_configuration: str | None = None,
     ) -> tuple[list[ReadingBulkCreate], datetime | None]:
         """Parse record 300 (interval data).
 
@@ -267,9 +335,6 @@ class NEM12Parser:
         except ValueError:
             self.errors.append(f"Line {line_num}: Invalid date format '{date_str}'")
             return readings, None
-        if unit_of_measure.casefold() not in {"kwh", "wh"}:
-            return readings, interval_date
-
         # Calculate number of intervals per day
         intervals_per_day = 1440 // interval_minutes  # 1440 minutes per day
 
@@ -305,11 +370,24 @@ class NEM12Parser:
         quality = self.QUALITY_UNKNOWN
         if quality_index is not None:
             quality_method = row[quality_index].strip() or None
-            reason_code = row[quality_index + 1].strip() or None if len(row) > quality_index + 1 else None
+            reason_code = (
+                row[quality_index + 1].strip() or None
+                if len(row) > quality_index + 1
+                else None
+            )
             reason_description = (
                 row[quality_index + 2].strip() or None if len(row) > quality_index + 2 else None
             )
-            quality = quality_method[0] if quality_method else self.QUALITY_UNKNOWN
+            quality = (
+                quality_method[0]
+                if quality_method and quality_method[0] != "V"
+                else self.QUALITY_UNKNOWN
+            )
+            if quality_method == "V" and (reason_code or reason_description):
+                self.warnings.append(
+                    f"Line {line_num}: Variable 300 QualityMethod must not include "
+                    "a reason code or description"
+                )
         else:
             self.warnings.append(
                 f"Line {line_num}: Missing or invalid QualityMethod; quality marked unresolved"
@@ -323,23 +401,34 @@ class NEM12Parser:
                 )
                 continue
             try:
-                value = float(value_str.strip())
-                if unit_of_measure.casefold() == "wh":
-                    value /= 1000
+                source_value = float(value_str.strip())
+                value = (
+                    source_value / 1000
+                    if unit_of_measure.casefold() == "wh"
+                    else source_value
+                )
 
-                # Preserve the interval end in fixed NEM market time (naive UTC+10).
-                # First interval (i=0) ends at 00:30, second at 01:00, etc.
+                # MDFF v2.7 defines nominal interval-end positions relative to
+                # IntervalDate; the source clock basis remains unverified.
                 interval_end = interval_date + timedelta(minutes=(i + 1) * interval_minutes)
 
                 readings.append(
                     ReadingBulkCreate(
                         timestamp=interval_end,
+                        source_interval_date=interval_date.date(),
+                        source_interval_number=i + 1,
                         interval_minutes=interval_minutes,
                         value=value,
+                        source_value=source_value,
+                        source_unit=unit_of_measure,
+                        provenance_kind="measured",
+                        source_time_basis=self.SOURCE_TIME_BASIS_UNVERIFIED,
+                        source_nmi_configuration=nmi_configuration,
+                        source_record_quality_method=quality_method,
                         quality=quality,
                         register_type="U",
                         direction="unknown",
-                        quality_method=quality_method,
+                        quality_method=None if quality_method == "V" else quality_method,
                         reason_code=reason_code,
                         reason_description=reason_description,
                     )
@@ -356,18 +445,17 @@ class NEM12Parser:
         row: list[str],
         line_num: int,
         interval_minutes: int,
-        readings: list[ReadingBulkCreate],
-    ) -> None:
-        """Apply a 400-record quality event to its 1-based interval range."""
+    ) -> IntervalQualityEvent | None:
+        """Parse one 400-record range without applying unverified partial data."""
         if len(row) < 4:
             self.errors.append(f"Line {line_num}: Invalid interval event record")
-            return
+            return None
         try:
             start_interval = int(row[1])
             end_interval = int(row[2])
         except ValueError:
             self.errors.append(f"Line {line_num}: Invalid interval event range")
-            return
+            return None
         quality_method = row[3].strip() or None
         reason_code = row[4].strip() or None if len(row) > 4 else None
         reason_description = row[5].strip() or None if len(row) > 5 else None
@@ -377,22 +465,157 @@ class NEM12Parser:
             or end_interval > 1440 // interval_minutes
         ):
             self.errors.append(f"Line {line_num}: Interval event range is out of bounds")
+            return None
+        if not quality_method:
+            self.errors.append(f"Line {line_num}: Missing interval-event QualityMethod")
+            return None
+
+        return IntervalQualityEvent(
+            start_interval=start_interval,
+            end_interval=end_interval,
+            quality_method=quality_method,
+            reason_code=reason_code,
+            reason_description=reason_description,
+            line_num=line_num,
+        )
+
+    def _apply_interval_events(
+        self,
+        readings: list[ReadingBulkCreate],
+        events: list[IntervalQualityEvent],
+        interval_minutes: int,
+    ) -> None:
+        """Apply 400 ranges only when they form a valid full-day partition."""
+        expected_count = 1440 // interval_minutes
+        summary_method = readings[0].source_record_quality_method if readings else None
+        summary_is_variable = summary_method == "V"
+        summary_reason_code = readings[0].reason_code if readings else None
+        summary_reason_description = readings[0].reason_description if readings else None
+
+        if summary_method is None or not self._quality_method_is_valid(
+            summary_method, allow_variable=True
+        ):
+            self._mark_interval_quality_unresolved(readings)
+            return
+        if not self._reason_fields_are_valid(
+            summary_method, summary_reason_code, summary_reason_description
+        ):
+            self.warnings.append("Record 300 contains invalid reason fields")
+            self._mark_interval_quality_unresolved(readings)
             return
 
-        for reading in readings:
-            interval_number = (
-                (reading.timestamp.hour * 60 + reading.timestamp.minute) // interval_minutes
-                or 1440 // interval_minutes
-            )
-            if start_interval <= interval_number <= end_interval:
-                reading.quality_method = quality_method
-                reading.quality = (
-                    quality_method[0]
-                    if quality_method and quality_method[0] in {"A", "E", "F", "S", "V"}
-                    else self.QUALITY_UNKNOWN
+        if not events:
+            if summary_is_variable:
+                self.warnings.append(
+                    "Record 300 uses variable QualityMethod V without required 400 records"
                 )
-                reading.reason_code = reason_code
-                reading.reason_description = reason_description
+                self._mark_interval_quality_unresolved(readings)
+            return
+
+        next_expected_interval = 1
+        valid = True
+        for event in events:
+            if event.start_interval != next_expected_interval:
+                valid = False
+                self.errors.append(
+                    f"Line {event.line_num}: 400 ranges must be ascending, contiguous, "
+                    "and non-overlapping"
+                )
+            if not self._quality_method_is_valid(event.quality_method):
+                valid = False
+                self.errors.append(
+                    f"Line {event.line_num}: Invalid interval-event QualityMethod"
+                )
+            if not self._reason_fields_are_valid(
+                event.quality_method,
+                event.reason_code,
+                event.reason_description,
+            ):
+                valid = False
+                self.errors.append(
+                    f"Line {event.line_num}: Invalid reason fields for interval-event "
+                    "QualityMethod"
+                )
+            next_expected_interval = event.end_interval + 1
+
+        if next_expected_interval != expected_count + 1:
+            valid = False
+            self.errors.append(
+                "400 ranges must cover every interval in the associated 300 record"
+            )
+
+        if not valid:
+            self._mark_interval_quality_unresolved(readings)
+            return
+
+        if summary_is_variable:
+            for event in events:
+                for reading in readings:
+                    interval_number = reading.source_interval_number
+                    if (
+                        interval_number is not None
+                        and event.start_interval <= interval_number <= event.end_interval
+                    ):
+                        reading.quality = event.quality_method[0]
+                        reading.quality_method = event.quality_method
+                        reading.reason_code = event.reason_code
+                        reading.reason_description = event.reason_description
+            return
+
+        self.warnings.append(
+            "400 ranges accompany a non-variable 300 QualityMethod; interval qualities "
+            "were retained as unresolved"
+        )
+        self._mark_interval_quality_unresolved(readings)
+
+    def _quality_method_is_valid(
+        self, quality_method: str, *, allow_variable: bool = False
+    ) -> bool:
+        """Validate the MDFF QMM field shape, not the referenced Part B method."""
+        if not re.fullmatch(r"[AEFSV](?:\d{2})?", quality_method):
+            return False
+        quality = quality_method[0]
+        has_method = len(quality_method) == 3
+        if quality in {"A", "V"} and has_method:
+            return False
+        if quality in {"F", "S"} and not has_method:
+            return False
+        if quality == "V" and not allow_variable:
+            return False
+        return True
+
+    @staticmethod
+    def _reason_fields_are_valid(
+        quality_method: str,
+        reason_code: str | None,
+        reason_description: str | None,
+    ) -> bool:
+        quality = quality_method[0]
+        if reason_code is not None and not re.fullmatch(r"\d{1,3}", reason_code):
+            return False
+        if reason_description is not None and reason_code is None:
+            return False
+        if quality == "F" and (
+            reason_code is not None or reason_description is not None
+        ):
+            return False
+        if quality == "S" and reason_code is None:
+            return False
+        if reason_code is not None and int(reason_code) == 0 and not reason_description:
+            return False
+        if quality == "V" and (reason_code is not None or reason_description is not None):
+            return False
+        return True
+
+    @staticmethod
+    def _mark_interval_quality_unresolved(
+        readings: list[ReadingBulkCreate],
+    ) -> None:
+        for reading in readings:
+            reading.quality = NEM12Parser.QUALITY_UNKNOWN
+            reading.quality_method = None
+            reading.reason_code = None
+            reading.reason_description = None
 
     @staticmethod
     def validate_file(file_content: str | bytes) -> tuple[bool, str]:

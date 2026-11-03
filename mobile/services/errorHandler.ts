@@ -2,7 +2,7 @@
  * Enhanced error handling utilities
  */
 
-import { Alert, Platform } from 'react-native';
+import { Alert } from 'react-native';
 import { AxiosError } from 'axios';
 
 // Error types

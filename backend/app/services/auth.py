@@ -1,9 +1,10 @@
 """Authentication service for password hashing and JWT tokens."""
 
-from datetime import datetime, timedelta, timezone
 import uuid
+from datetime import datetime, timedelta, timezone
 
-from jose import JWTError, jwt
+import jwt
+from jwt import PyJWTError
 from passlib.context import CryptContext
 from sqlalchemy.orm import Session
 
@@ -59,30 +60,29 @@ class AuthService:
             payload = jwt.decode(token, settings.secret_key, algorithms=[settings.algorithm])
             user_id: int | None = payload.get("sub")
             token_type: str = payload.get("type", "access")
-            
+
             if user_id is None:
                 return None
             if token_type != expected_type:
                 return None
-                
+
             return TokenData(user_id=int(user_id), token_type=token_type)
-        except JWTError:
+        except PyJWTError:
             return None
 
     @staticmethod
     def refresh_access_token(refresh_token: str) -> tuple[str, str] | None:
         """Create new access and refresh tokens from a valid refresh token.
-        
         Returns tuple of (access_token, refresh_token) or None if invalid.
         """
         token_data = AuthService.decode_token(refresh_token, expected_type="refresh")
         if not token_data or not token_data.user_id:
             return None
-        
+
         # Create new tokens
         new_access = AuthService.create_access_token(data={"sub": str(token_data.user_id)})
         new_refresh = AuthService.create_refresh_token(data={"sub": str(token_data.user_id)})
-        
+
         return (new_access, new_refresh)
 
     @staticmethod

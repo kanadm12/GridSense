@@ -1,10 +1,8 @@
 """Insights and analytics schemas."""
 
-from datetime import datetime
 from enum import Enum
-from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 
 class SeverityLevel(str, Enum):
@@ -100,8 +98,8 @@ class DailyBrief(BaseModel):
     """Daily energy brief for the user."""
     date: str
     greeting: str
-    yesterday_usage_kwh: float
+    yesterday_usage_kwh: float | None = None
     yesterday_cost: float | None = None
-    comparison_to_average: float  # Percentage, negative = below average
+    comparison_to_average: float | None = None  # Percentage, negative = below average
     insights: list[Insight]
     forecast_message: str | None = None

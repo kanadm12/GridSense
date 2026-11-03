@@ -2,8 +2,7 @@
 
 from sqlalchemy.orm import Session
 
-from app.models.chat import ChatSession, ChatMessage
-from app.models.meter import Meter
+from app.models.chat import ChatMessage, ChatSession
 
 
 class ChatService:
@@ -39,9 +38,13 @@ class ChatService:
             .all()
         )
 
-    def add_message(self, session_id: int, role: str, content: str, tokens_used: int | None = None) -> ChatMessage:
+    def add_message(
+        self, session_id: int, role: str, content: str, tokens_used: int | None = None
+    ) -> ChatMessage:
         """Add a message to a chat session."""
-        message = ChatMessage(session_id=session_id, role=role, content=content, tokens_used=tokens_used)
+        message = ChatMessage(
+            session_id=session_id, role=role, content=content, tokens_used=tokens_used
+        )
         self.db.add(message)
         self.db.commit()
         self.db.refresh(message)

@@ -1,0 +1,4 @@
+# Tooling-only environment for the CI dependency audit (pip-audit).
+# Kept separate from the application locks so the scanner never shares
+# an environment with the application being scanned.
+pip-audit==2.10.1

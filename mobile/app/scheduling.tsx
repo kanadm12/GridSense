@@ -58,12 +58,16 @@ interface WallTimeParts {
 interface TaskForm {
   appliance: string;
   powerKw: string;
+  baselineKw: string;
   durationMinutes: number;
   earliestStart: string;
   deadline: string;
   preferredStart: string;
   mandatory: boolean;
   omissionPenaltyAud: string;
+  householdPowerLimitKw: string;
+  gridPowerLimitKw: string;
+  preferencePenaltyAudPerInterval: string;
 }
 
 const formatterForZone = (timeZone: string) =>
@@ -238,13 +242,29 @@ const defaultTaskForm = (timeZone: string): TaskForm => {
   return {
     appliance: 'Water heater',
     powerKw: '2.4',
+    baselineKw: String(DEMO_BASELINE_KW),
     durationMinutes: 60,
     earliestStart: `${tomorrow} 08:00`,
     deadline: `${tomorrow} 12:00`,
     preferredStart: `${tomorrow} 09:00`,
     mandatory: true,
     omissionPenaltyAud: '1.00',
+    householdPowerLimitKw: '',
+    gridPowerLimitKw: '',
+    preferencePenaltyAudPerInterval: '0.01',
   };
+};
+
+const optionalNonnegativeNumber = (
+  value: string,
+  label: string
+): number | undefined => {
+  if (!value.trim()) return undefined;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    throw new Error(`${label} must be a nonnegative number, or left blank.`);
+  }
+  return parsed;
 };
 
 const scheduleTask = (schedule: ScheduleV1 | null | undefined) =>
@@ -265,6 +285,7 @@ const readableTime = (iso: string | null | undefined, timeZone: string) => {
 
 export default function SchedulingScreen() {
   const selectedMeter = useMetersStore((state) => state.selectedMeter);
+  const selectedMeterId = selectedMeter?.id;
   const fetchMeters = useMetersStore((state) => state.fetchMeters);
   const [meter, setMeter] = useState<Meter | null>(selectedMeter);
   const [tariff, setTariff] = useState<UserTariff | null>(null);
@@ -276,6 +297,7 @@ export default function SchedulingScreen() {
   const [validationError, setValidationError] = useState<string | null>(null);
   const [result, setResult] = useState<SchedulingResponseV1 | null>(null);
   const [resultError, setResultError] = useState<string | null>(null);
+  const [evidenceExpanded, setEvidenceExpanded] = useState(false);
   const [previewChoice, setPreviewChoice] = useState<'recommended' | 'original' | null>(
     null
   );
@@ -287,7 +309,7 @@ export default function SchedulingScreen() {
         setContextLoading(true);
         setContextError(null);
         try {
-          if (!selectedMeter) {
+          if (selectedMeterId === undefined) {
             await fetchMeters();
           }
           const currentMeter = useMetersStore.getState().selectedMeter;
@@ -327,7 +349,7 @@ export default function SchedulingScreen() {
       return () => {
         active = false;
       };
-    }, [fetchMeters, selectedMeter?.id])
+    }, [fetchMeters, selectedMeterId])
   );
 
   const displayedTariffWindows = useMemo(
@@ -358,6 +380,33 @@ export default function SchedulingScreen() {
     const powerKw = Number(form.powerKw);
     if (!Number.isFinite(powerKw) || powerKw <= 0 || powerKw > 100) {
       setValidationError('Estimated power must be a number greater than 0 and no more than 100 kW.');
+      return;
+    }
+    const baselineKw = Number(form.baselineKw);
+    if (!form.baselineKw.trim() || !Number.isFinite(baselineKw) || baselineKw < 0) {
+      setValidationError('Synthetic non-task baseline must be a nonnegative kW value.');
+      return;
+    }
+
+    let householdPowerLimitKw: number | undefined;
+    let gridPowerLimitKw: number | undefined;
+    let preferencePenaltyAudPerInterval = 0;
+    try {
+      householdPowerLimitKw = optionalNonnegativeNumber(
+        form.householdPowerLimitKw,
+        'Household power limit'
+      );
+      gridPowerLimitKw = optionalNonnegativeNumber(
+        form.gridPowerLimitKw,
+        'Grid power limit'
+      );
+      preferencePenaltyAudPerInterval =
+        optionalNonnegativeNumber(
+          form.preferencePenaltyAudPerInterval,
+          'Start-time preference penalty'
+        ) ?? 0;
+    } catch (error) {
+      setValidationError(getErrorMessage(error));
       return;
     }
 
@@ -424,7 +473,7 @@ export default function SchedulingScreen() {
     };
     const intervals = Array.from({ length: horizonSlots }, (_, index) => ({
       interval_start: instantToLocalIso(earliestMs + index * STEP_MS, timeZone),
-      demand_kw: DEMO_BASELINE_KW,
+      demand_kw: baselineKw,
     }));
     const request: SchedulingRequestV1 = {
       schema_version: '1.0',
@@ -434,7 +483,9 @@ export default function SchedulingScreen() {
       interval_minutes: INTERVAL_MINUTES,
       timezone: timeZone,
       currency: 'AUD',
-      preference_penalty_aud_per_interval: 0.01,
+      preference_penalty_aud_per_interval: preferencePenaltyAudPerInterval,
+      ...(householdPowerLimitKw === undefined ? {} : { household_power_limit_kw: householdPowerLimitKw }),
+      ...(gridPowerLimitKw === undefined ? {} : { grid_power_limit_kw: gridPowerLimitKw }),
       tasks: [task],
       baseline_profile: {
         source: 'synthetic',
@@ -479,6 +530,7 @@ export default function SchedulingScreen() {
   })();
   const candidateTask = scheduleTask(result?.candidate_schedule);
   const referenceTask = scheduleTask(result?.reference_schedule);
+  const preferredTask = scheduleTask(result?.preferred_schedule);
   const preferenceShift = (() => {
     if (!candidateTask?.start || !form.preferredStart.trim()) return null;
     try {
@@ -523,8 +575,8 @@ export default function SchedulingScreen() {
         <View style={styles.demoNotice}>
           <Ionicons name="information-circle-outline" size={20} color={Colors.accent} />
           <Text style={styles.demoNoticeText}>
-            Demo preset: a fixed 0.8 kW synthetic baseline and an estimated appliance load.
-            This is not measured household behavior.
+            Synthetic scenario only. The baseline and appliance load below are assumptions, not
+            measured household behavior.
           </Text>
         </View>
 
@@ -561,6 +613,22 @@ export default function SchedulingScreen() {
                   <Ionicons name="arrow-forward" size={16} color={Colors.primaryDark} />
                 </TouchableOpacity>
               )}
+            </View>
+
+            <View style={styles.card}>
+              <Text style={styles.sectionTitle}>Synthetic non-task baseline</Text>
+              <Text style={styles.fieldHint}>
+                Constant demand assumption across the preview horizon; this is illustrative and
+                separate from imported meter readings.
+              </Text>
+              <TextInput
+                accessibilityLabel="Synthetic non-task baseline in kilowatts"
+                value={form.baselineKw}
+                onChangeText={(value) => updateForm('baselineKw', value)}
+                keyboardType="decimal-pad"
+                placeholder="0.8"
+                style={styles.input}
+              />
             </View>
 
             <View style={styles.card}>
@@ -672,11 +740,57 @@ export default function SchedulingScreen() {
                     style={styles.input}
                   />
                   <Text style={styles.fieldHint}>
-                    The solver compares this penalty with the task's energy cost. Leave blank
+                    The solver compares this penalty with the task&apos;s energy cost. Leave blank
                     to use the no-savings treatment, which omits the optional task.
                   </Text>
                 </>
               )}
+            </View>
+
+            <View style={styles.card}>
+              <Text style={styles.sectionTitle}>Optional power constraints</Text>
+              <Text style={styles.fieldHint}>
+                User-entered limits apply to baseline plus scheduled task demand. Leave blank when
+                no such limit is part of this illustrative scenario.
+              </Text>
+              <Text style={styles.fieldLabel}>Maximum household demand (kW)</Text>
+              <TextInput
+                accessibilityLabel="Maximum household demand in kilowatts"
+                value={form.householdPowerLimitKw}
+                onChangeText={(value) => updateForm('householdPowerLimitKw', value)}
+                keyboardType="decimal-pad"
+                placeholder="Optional"
+                style={styles.input}
+              />
+              <Text style={styles.fieldLabel}>Maximum grid demand (kW)</Text>
+              <TextInput
+                accessibilityLabel="Maximum grid demand in kilowatts"
+                value={form.gridPowerLimitKw}
+                onChangeText={(value) => updateForm('gridPowerLimitKw', value)}
+                keyboardType="decimal-pad"
+                placeholder="Optional"
+                style={styles.input}
+              />
+            </View>
+
+            <View style={styles.card}>
+              <Text style={styles.sectionTitle}>Start-time preference</Text>
+              <Text style={styles.fieldLabel}>
+                Penalty per 30-minute interval away from preferred start (AUD)
+              </Text>
+              <TextInput
+                accessibilityLabel="Start-time preference penalty in AUD per interval"
+                value={form.preferencePenaltyAudPerInterval}
+                onChangeText={(value) =>
+                  updateForm('preferencePenaltyAudPerInterval', value)
+                }
+                keyboardType="decimal-pad"
+                placeholder="0.01"
+                style={styles.input}
+              />
+              <Text style={styles.fieldHint}>
+                This is an explicit modeled preference cost, shown separately from energy charges.
+              </Text>
             </View>
 
             <View style={styles.card}>
@@ -751,6 +865,11 @@ export default function SchedulingScreen() {
                 {result.tariff.status !== 'configured' && (
                   <Text style={styles.warningText}>
                     Tariff status: {result.tariff.status.replace(/_/g, ' ')}.
+                  </Text>
+                )}
+                {!result.baseline_eligibility.eligible_for_costed_preview && (
+                  <Text style={styles.warningText}>
+                    Baseline unavailable: {result.baseline_eligibility.explanation}
                   </Text>
                 )}
 
@@ -828,6 +947,40 @@ export default function SchedulingScreen() {
                     </Text>
                   </View>
                 )}
+                {result.reference_schedule?.status === 'not_found' && (
+                  <View style={styles.outcomeCard}>
+                    <Text style={styles.scheduleLabel}>Greedy reference unavailable</Text>
+                    <Text style={styles.scheduleDetail}>
+                      {result.reference_schedule.reason ?? 'No feasible greedy schedule was found.'}
+                    </Text>
+                  </View>
+                )}
+
+                {preferredTask && (
+                  <View style={styles.scheduleCard}>
+                    <Text style={styles.scheduleLabel}>Preferred schedule</Text>
+                    {preferredTask.omitted ? (
+                      <Text style={styles.scheduleTime}>Optional task omitted</Text>
+                    ) : (
+                      <Text style={styles.scheduleTime}>
+                        {readableTime(preferredTask.start, timeZone)}
+                      </Text>
+                    )}
+                    <Text style={styles.scheduleDetail}>
+                      Requested start-time scenario, evaluated with the same baseline,
+                      tariff revision, task constraints, and power limits.
+                    </Text>
+                  </View>
+                )}
+                {result.preferred_schedule?.status === 'not_found' && (
+                  <View style={styles.outcomeCard}>
+                    <Text style={styles.scheduleLabel}>Preferred schedule unavailable</Text>
+                    <Text style={styles.scheduleDetail}>
+                      {result.preferred_schedule.reason ??
+                        'One or more preferred task start times are unavailable.'}
+                    </Text>
+                  </View>
+                )}
 
                 {result.objective_breakdown && (
                   <View style={styles.objectiveCard}>
@@ -851,11 +1004,35 @@ export default function SchedulingScreen() {
                       </Text>
                     </View>
                     <View style={styles.metricRow}>
+                      <Text style={styles.metricLabel}>Preferred energy cost</Text>
+                      <Text style={styles.metricValue}>
+                        {formatAud(result.objective_breakdown.preferred_energy_cost_aud)}
+                      </Text>
+                    </View>
+                    <View style={styles.metricRow}>
                       <Text style={styles.metricLabel}>Candidate − reference</Text>
                       <Text style={styles.metricValue}>
                         {energyDelta == null
                           ? 'Unavailable'
                           : `${energyDelta < 0 ? '−' : '+'}$${Math.abs(energyDelta).toFixed(2)}`}
+                      </Text>
+                    </View>
+                    <View style={styles.metricRow}>
+                      <Text style={styles.metricLabel}>MILP − preferred</Text>
+                      <Text style={styles.metricValue}>
+                        {formatAud(
+                          result.objective_breakdown
+                            .milp_vs_preferred_energy_cost_delta_aud
+                        )}
+                      </Text>
+                    </View>
+                    <View style={styles.metricRow}>
+                      <Text style={styles.metricLabel}>Greedy − preferred</Text>
+                      <Text style={styles.metricValue}>
+                        {formatAud(
+                          result.objective_breakdown
+                            .greedy_vs_preferred_energy_cost_delta_aud
+                        )}
                       </Text>
                     </View>
                     <View style={styles.metricRow}>
@@ -881,12 +1058,52 @@ export default function SchedulingScreen() {
                       </Text>
                     </View>
                     <Text style={styles.fieldHint}>
-                      This is a modeled energy-cost comparison against the rule-based
-                      reference—not a bill or a household savings estimate. The weighted
-                      objective also includes the configured preference and omission penalties.
+                      Differences are modeled energy-charge comparisons, not bills or household
+                      savings. Preference and omission penalties are separate AUD objective
+                      components; they are not energy charges.
                     </Text>
                   </View>
                 )}
+
+                <View style={styles.objectiveCard}>
+                  <TouchableOpacity
+                    onPress={() => setEvidenceExpanded((expanded) => !expanded)}
+                    accessibilityRole="button"
+                    accessibilityState={{ expanded: evidenceExpanded }}
+                  >
+                    <Text style={styles.scheduleLabel}>
+                      {evidenceExpanded ? 'Hide calculation evidence' : 'How was this calculated?'}
+                    </Text>
+                  </TouchableOpacity>
+                  {evidenceExpanded && (
+                    <>
+                      <Text style={styles.scheduleDetail}>
+                        Evidence status: {result.calculation_evidence.status}. Baseline type:{' '}
+                        {result.calculation_evidence.baseline_source_classification}.
+                      </Text>
+                      <Text style={styles.scheduleDetail}>
+                        Rule {result.calculation_evidence.rule_version}; calculation{' '}
+                        {result.calculation_evidence.calculation_method_version}.
+                      </Text>
+                      <Text style={styles.scheduleDetail}>
+                        Tariff revision:{' '}
+                        {result.calculation_evidence.tariff_revision_ids.join(', ') || 'unavailable'}.
+                        Applicable dates:{' '}
+                        {result.calculation_evidence.tariff_effective_from ?? 'unknown'} to{' '}
+                        {result.calculation_evidence.tariff_effective_to ?? 'open-ended'}. Expires{' '}
+                        {readableTime(result.calculation_evidence.expires_at, timeZone)}.
+                      </Text>
+                      <Text style={styles.scheduleDetail}>
+                        Input digest: {result.calculation_evidence.input_digest_sha256 ?? 'unavailable'}
+                      </Text>
+                      {result.calculation_evidence.limitations.map((limitation) => (
+                        <Text key={limitation} style={styles.scheduleDetail}>
+                          {limitation}
+                        </Text>
+                      ))}
+                    </>
+                  )}
+                </View>
 
                 {result.assumptions.map((assumption) => (
                   <View key={assumption} style={styles.assumptionRow}>

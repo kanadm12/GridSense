@@ -4,7 +4,8 @@ from datetime import datetime
 from enum import Enum
 from typing import TYPE_CHECKING
 
-from sqlalchemy import ForeignKey, String, Boolean, Enum as SQLEnum
+from sqlalchemy import Enum as SQLEnum
+from sqlalchemy import ForeignKey, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, TimestampMixin
@@ -50,7 +51,9 @@ class Notification(Base, TimestampMixin):
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
 
-    notification_type: Mapped[NotificationType] = mapped_column(SQLEnum(NotificationType), nullable=False)
+    notification_type: Mapped[NotificationType] = mapped_column(
+        SQLEnum(NotificationType), nullable=False
+    )
     title: Mapped[str] = mapped_column(String(200), nullable=False)
     message: Mapped[str] = mapped_column(String(1000), nullable=False)
     data: Mapped[str | None] = mapped_column(String(2000), nullable=True)  # JSON for extra data
@@ -62,7 +65,9 @@ class Notification(Base, TimestampMixin):
     user: Mapped["User"] = relationship("User", back_populates="notifications")
 
     def __repr__(self) -> str:
-        return f"<Notification(id={self.id}, user_id={self.user_id}, type={self.notification_type})>"
+        return (
+            f"<Notification(id={self.id}, user_id={self.user_id}, type={self.notification_type})>"
+        )
 
 
 class NotificationPreferences(Base, TimestampMixin):
@@ -71,7 +76,9 @@ class NotificationPreferences(Base, TimestampMixin):
     __tablename__ = "notification_preferences"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), unique=True, nullable=False)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), unique=True, nullable=False
+    )
 
     # Preference flags
     anomaly_alerts: Mapped[bool] = mapped_column(default=True, nullable=False)

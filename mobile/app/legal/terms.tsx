@@ -21,7 +21,7 @@ export default function TermsOfServiceScreen() {
 
         <Section title="1. Acceptance of Terms">
           <Text style={styles.body}>
-            By accessing or using GridSense ("the App"), you agree to be bound by these
+            By accessing or using GridSense (&quot;the App&quot;), you agree to be bound by these
             Terms of Service. If you do not agree, please do not use the App.
           </Text>
         </Section>
@@ -65,7 +65,7 @@ export default function TermsOfServiceScreen() {
 
         <Section title="6. Disclaimer of Warranties">
           <Text style={styles.body}>
-            GridSense is provided "as is" without warranties of any kind. We do not guarantee:
+            GridSense is provided &quot;as is&quot; without warranties of any kind. We do not guarantee:
           </Text>
           <BulletPoint text="Accuracy of savings estimates or recommendations" />
           <BulletPoint text="Uninterrupted or error-free service" />

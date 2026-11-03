@@ -6,7 +6,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.models.meter import Meter
-from app.models.reading import Reading, consumption_reading_filter
+from app.models.reading import Reading, measured_import_reading_filter
 from app.services.tariff import (
     local_interval_end_date,
     market_bounds_for_local_dates,
@@ -56,7 +56,7 @@ class BillForecaster:
                 target_month.replace(month=target_month.month + 1, day=1)
                 - timedelta(days=1)
             )
-        
+
         days_in_month = (last_day - first_day).days + 1
         days_elapsed = min(max((today - first_day).days + 1, 0), days_in_month)
         days_remaining = days_in_month - days_elapsed
@@ -72,7 +72,7 @@ class BillForecaster:
                 self.db.query(Reading)
                 .filter(
                     Reading.meter_id == meter_id,
-                    consumption_reading_filter(),
+                    measured_import_reading_filter(),
                     Reading.timestamp > market_start,
                     Reading.timestamp <= market_end,
                 )
@@ -92,7 +92,7 @@ class BillForecaster:
             self.db.query(Reading)
             .filter(
                 Reading.meter_id == meter_id,
-                consumption_reading_filter(),
+                measured_import_reading_filter(),
                 Reading.timestamp > historical_start,
                 Reading.timestamp <= historical_end,
             )
@@ -115,7 +115,7 @@ class BillForecaster:
         # More weight to current as month progresses
         current_weight = days_elapsed / days_in_month
         projected_daily_avg = (
-            current_weight * current_daily_avg + 
+            current_weight * current_daily_avg +
             (1 - current_weight) * historical_daily_avg
         )
 
@@ -164,7 +164,7 @@ class BillForecaster:
             # Calculate target month
             target = today.replace(day=1) - timedelta(days=30 * i)
             first_day = target.replace(day=1)
-            
+
             if target.month == 12:
                 last_day = target.replace(year=target.year + 1, month=1, day=1) - timedelta(days=1)
             else:
@@ -178,7 +178,7 @@ class BillForecaster:
                 self.db.query(Reading)
                 .filter(
                     Reading.meter_id == meter_id,
-                    consumption_reading_filter(),
+                    measured_import_reading_filter(),
                     Reading.timestamp > market_start,
                     Reading.timestamp <= market_end,
                 )

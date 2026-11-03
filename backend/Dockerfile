@@ -8,9 +8,13 @@ RUN apt-get update && apt-get install -y \
     libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies
-COPY pyproject.toml README.md ./
-RUN pip install --no-cache-dir -e .
+# Install the hash-locked dependency set that CI tests, then the project itself.
+# pyproject.toml force-includes the AER retailer registry, so that file must exist
+# before the editable build.
+COPY pyproject.toml README.md requirements-dev.lock ./
+COPY app/data/aer_retailer_uris_2026_01.json app/data/aer_retailer_uris_2026_01.json
+RUN pip install --no-cache-dir --require-hashes -r requirements-dev.lock \
+    && pip install --no-cache-dir --no-deps -e .
 
 # Copy application code
 COPY . .

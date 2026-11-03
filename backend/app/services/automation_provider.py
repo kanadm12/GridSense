@@ -17,14 +17,18 @@ class AutomationProvider(ABC):
     """Interface shared by simulated and real device providers."""
 
     @abstractmethod
-    async def execute(self, device: SmartDevice, command: str, params: dict[str, Any] | None) -> dict[str, Any]:
+    async def execute(
+        self, device: SmartDevice, command: str, params: dict[str, Any] | None
+    ) -> dict[str, Any]:
         """Execute a command and return the provider-reported state."""
 
 
 class SimulatorProvider(AutomationProvider):
     """Deterministic provider used for development and automated tests."""
 
-    async def execute(self, device: SmartDevice, command: str, params: dict[str, Any] | None) -> dict[str, Any]:
+    async def execute(
+        self, device: SmartDevice, command: str, params: dict[str, Any] | None
+    ) -> dict[str, Any]:
         state = dict(device.current_state or {})
         params = params or {}
         if command == "on":
@@ -51,7 +55,9 @@ class HomeAssistantProvider(AutomationProvider):
     def __init__(self, settings: Settings):
         self.settings = settings
 
-    async def execute(self, device: SmartDevice, command: str, params: dict[str, Any] | None) -> dict[str, Any]:
+    async def execute(
+        self, device: SmartDevice, command: str, params: dict[str, Any] | None
+    ) -> dict[str, Any]:
         if not device.device_id:
             raise AutomationProviderError("Home Assistant device requires an entity ID")
         if not self.settings.home_assistant_token:
@@ -63,8 +69,12 @@ class HomeAssistantProvider(AutomationProvider):
         payload = {"entity_id": device.device_id, **data}
 
         try:
-            async with httpx.AsyncClient(base_url=base_url, headers=headers, timeout=10.0) as client:
-                response = await client.post(f"/api/services/{service_domain}/{service}", json=payload)
+            async with httpx.AsyncClient(
+                base_url=base_url, headers=headers, timeout=10.0
+            ) as client:
+                response = await client.post(
+                    f"/api/services/{service_domain}/{service}", json=payload
+                )
                 response.raise_for_status()
                 state_response = await client.get(f"/api/states/{device.device_id}")
                 state_response.raise_for_status()

@@ -1,0 +1,68 @@
+{
+  "fixture_version": "prompt17-interval-quality-v1",
+  "provenance_kind": "synthetic",
+  "source_time_basis": "UTC",
+  "unit_note": "source_value is retained as received; value is normalized kWh",
+  "intervals": [
+    {
+      "slot": 0,
+      "value": 1.0,
+      "source_value": 1000.0,
+      "source_unit": "Wh",
+      "quality": "A",
+      "direction": "import",
+      "register_type": "U",
+      "eligible_import": true
+    },
+    {
+      "slot": 1,
+      "value": 0.25,
+      "source_value": 0.25,
+      "source_unit": "kWh",
+      "quality": "A",
+      "direction": "export",
+      "register_type": "U",
+      "eligible_import": false
+    },
+    {
+      "slot": 2,
+      "value": 0.5,
+      "source_value": 0.5,
+      "source_unit": "kWh",
+      "quality": "A",
+      "direction": "unknown",
+      "register_type": "U",
+      "eligible_import": false
+    },
+    {
+      "slot": 3,
+      "value": 0.5,
+      "source_value": 0.5,
+      "source_unit": "kWh",
+      "quality": "A",
+      "direction": null,
+      "register_type": "B",
+      "eligible_import": false
+    },
+    {
+      "slot": 4,
+      "value": 0.5,
+      "source_value": 0.5,
+      "source_unit": "kWh",
+      "quality": "E",
+      "direction": "import",
+      "register_type": "U",
+      "eligible_import": false
+    },
+    {
+      "slot": 5,
+      "value": 0.5,
+      "source_value": 0.5,
+      "source_unit": "kW",
+      "quality": "A",
+      "direction": "import",
+      "register_type": "U",
+      "eligible_import": false
+    }
+  ]
+}

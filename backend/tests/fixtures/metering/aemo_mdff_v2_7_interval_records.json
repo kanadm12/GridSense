@@ -1,0 +1,66 @@
+{
+  "fixture_version": "aemo-mdff-nem12-v2.7-gridsense-1",
+  "fixture_kind": "synthetic-conformance-case",
+  "source_document": {
+    "title": "Meter Data File Format Specification NEM12 & NEM13",
+    "version": "2.7",
+    "effective_date": "2025-12-01",
+    "sections": ["3.3.2", "3.3.3", "4.3", "4.4", "4.5"],
+    "appendices": ["B", "C", "D", "E"],
+    "url": "https://www.aemo.com.au/-/media/files/electricity/nem/retail_and_metering/market_settlement_and_transfer_solutions/2025/mdff-specification-nem12-nem13-v27.pdf"
+  },
+  "notice": "Generated test data only. Channel suffixes and stream identifiers are opaque; this fixture does not establish direction, clock basis, or a valid customer NMI configuration.",
+  "interval_date": "20251201",
+  "interval_minutes": 30,
+  "channels": [
+    {
+      "nmi": "1234567890",
+      "nmi_configuration": "E1B1",
+      "register_id": "1",
+      "nmi_suffix": "E1",
+      "mdm_data_stream_identifier": "N1",
+      "meter_serial": "TESTSERIAL1",
+      "unit_of_measure": "Wh",
+      "value_text": "1000",
+      "record_300_quality_method": "V",
+      "record_300_reason_code": "",
+      "record_400": [
+        {"start_interval": 1, "end_interval": 24, "quality_method": "A", "reason_code": "", "reason_description": ""},
+        {"start_interval": 25, "end_interval": 36, "quality_method": "S53", "reason_code": "9", "reason_description": "Test substitution"},
+        {"start_interval": 37, "end_interval": 48, "quality_method": "E52", "reason_code": "", "reason_description": ""}
+      ],
+      "expected": {
+        "interval_count": 48,
+        "source_value": 1000.0,
+        "normalized_value_kwh": 1.0,
+        "quality_counts": {"A": 24, "S": 12, "E": 12},
+        "first_interval_end_candidate": "2025-12-01T00:30:00",
+        "last_interval_end_candidate": "2025-12-02T00:00:00"
+      }
+    },
+    {
+      "nmi": "1234567890",
+      "nmi_configuration": "E1B1",
+      "register_id": "2",
+      "nmi_suffix": "B1",
+      "mdm_data_stream_identifier": "N2",
+      "meter_serial": "TESTSERIAL1",
+      "unit_of_measure": "kWh",
+      "value_text": "0.5",
+      "record_300_quality_method": "A",
+      "record_300_reason_code": "",
+      "record_400": [],
+      "expected": {
+        "interval_count": 48,
+        "normalized_value_kwh": 0.5,
+        "quality_counts": {"A": 48},
+        "first_interval_end_candidate": "2025-12-01T00:30:00",
+        "last_interval_end_candidate": "2025-12-02T00:00:00"
+      }
+    }
+  ],
+  "melbourne_dst_shape_cases": [
+    {"interval_date": "20250406", "mdff_30_minute_values": 48, "melbourne_civil_day_slots": 50},
+    {"interval_date": "20251005", "mdff_30_minute_values": 48, "melbourne_civil_day_slots": 46}
+  ]
+}

@@ -2,6 +2,7 @@
 
 import logging
 import os
+import re
 from datetime import date, timedelta
 
 try:
@@ -18,8 +19,20 @@ from app.services.usage_analyzer import UsageAnalyzer
 
 logger = logging.getLogger(__name__)
 
+UNSUPPORTED_FINANCIAL_CLAIM = re.compile(
+    r"(?:"
+    r"[$]\s*\d|"
+    r"\bAUD\s*\$?\s*\d|"
+    r"\b(?:save|saves|saving|savings|reduce|reduction|lower|cut|decrease)\b"
+    r".{0,45}\b\d+(?:\.\d+)?\s*(?:%|percent|kwh|dollars?|aud)|"
+    r"\b(?:bill|cost|charge|usage|consumption)\b.{0,35}"
+    r"\b\d+(?:\.\d+)?\s*(?:%|percent|kwh)"
+    r")",
+    re.IGNORECASE,
+)
 
-SYSTEM_PROMPT = """You are GridSense, an AI energy assistant for Victorian households in Australia. 
+
+SYSTEM_PROMPT = """You are GridSense, an AI energy assistant for Victorian households in Australia.
 You help users understand their electricity usage, save money, and make smart energy decisions.
 
 Your expertise includes:
@@ -38,6 +51,8 @@ Guidelines:
 - Mention Victorian government rebates when relevant
 - Shared GridSense time windows are examples, not proof of a user's retailer tariff.
 - Do not invent rates, bills, or dollar savings.
+- This chat request contains no calculation-evidence object. Do not state quantified
+  customer savings, bill reductions, or tariff impacts.
 - Discuss money only when a verified configured tariff is explicitly in context.
 - Chat is explanatory guidance, not an authoritative bill.
 - Direct users to tariff and bill comparison screens for estimates, not retailer-issued bills.
@@ -69,50 +84,65 @@ class AIAssistant:
         """Get user's recent usage data for context."""
         from app.models.meter import Meter
 
-        # Get user's meter if not specified
-        if meter_id is None:
-            meter = (
-                self.db.query(Meter)
-                .filter(Meter.user_id == user_id, Meter.is_active == True)
-                .first()
-            )
-            if not meter:
-                return "No meter data available for this user."
-            meter_id = meter.id
+        meter_query = self.db.query(Meter).filter(
+            Meter.user_id == user_id,
+            Meter.is_active.is_(True),
+        )
+        if meter_id is not None:
+            meter_query = meter_query.filter(Meter.id == meter_id)
+        meter = meter_query.first()
+        if meter is None:
+            return "No meter data available for this user."
+        meter_id = meter.id
 
         analyzer = UsageAnalyzer(self.db)
 
-        # Get last 7 days of usage
-        end_date = date.today()
-        start_date = end_date - timedelta(days=7)
+        # Use only the seven fully completed dates immediately before today.
+        end_date = date.today() - timedelta(days=1)
+        start_date = end_date - timedelta(days=6)
 
         try:
             daily_usage = analyzer.get_daily_usage(
                 meter_id=meter_id, start_date=start_date, end_date=end_date, limit=7
             )
 
-            if not daily_usage:
-                return "No recent usage data available."
+            expected_dates = {
+                start_date + timedelta(days=offset) for offset in range(7)
+            }
+            if (
+                len(daily_usage) != 7
+                or {day.date for day in daily_usage} != expected_dates
+                or any(
+                    day.coverage_status != "complete"
+                    or day.provenance_status != "measured"
+                    or day.unresolved_direction_count
+                    or day.legacy_direction_unverified_count
+                    for day in daily_usage
+                )
+            ):
+                return (
+                    "Recent usage context is unavailable because seven complete, "
+                    "measured, direction-confirmed local days are not available."
+                )
 
-            # Build context string
-            total_kwh = sum(d.total_kwh for d in daily_usage)
-            avg_daily = total_kwh / len(daily_usage)
-
-            # Get TOU breakdown from summary
-            summary = analyzer.get_usage_summary(meter_id, start_date, end_date)
+            total_kwh = sum(day.observed_eligible_kwh for day in daily_usage)
+            avg_daily = total_kwh / 7
+            peak_kwh = sum(day.peak_kwh for day in daily_usage)
+            shoulder_kwh = sum(day.shoulder_kwh for day in daily_usage)
+            off_peak_kwh = sum(day.off_peak_kwh for day in daily_usage)
 
             context = f"""User's Recent Energy Usage (last 7 days):
-- Total consumption: {total_kwh:.1f} kWh
+- Eligible measured imports: {total_kwh:.1f} kWh
 - Average daily usage: {avg_daily:.1f} kWh/day
-- Peak usage: {summary.tou_breakdown.get("peak", 0):.1f} kWh
-  ({summary.tou_breakdown.get("peak", 0) / total_kwh * 100:.0f}%)
-- Shoulder usage: {summary.tou_breakdown.get("shoulder", 0):.1f} kWh
-- Off-Peak usage: {summary.tou_breakdown.get("off_peak", 0):.1f} kWh
+- Shared GridSense peak-window imports: {peak_kwh:.1f} kWh
+- Shared GridSense shoulder-window imports: {shoulder_kwh:.1f} kWh
+- Shared GridSense off-peak-window imports: {off_peak_kwh:.1f} kWh
+These shared time windows are not proof of the user's retailer tariff.
 
 Daily breakdown:
 """
             for d in daily_usage[-5:]:  # Last 5 days
-                context += f"- {d.date}: {d.total_kwh:.1f} kWh\n"
+                context += f"- {d.date}: {d.observed_eligible_kwh:.1f} kWh eligible imports\n"
 
             return context
 
@@ -182,7 +212,8 @@ USER'S DATA:
                     max_tokens=500,
                     temperature=0.7,
                 )
-                return response.choices[0].message.content
+                content = response.choices[0].message.content or ""
+                return self._guard_generated_response(content, usage_context)
             except Exception as exc:
                 logger.warning(
                     "OpenAI request failed; using local assistant fallback",
@@ -192,6 +223,37 @@ USER'S DATA:
 
         # Fallback: Rule-based response
         return self._generate_fallback_response(message, usage_context, rag_context)
+
+    @staticmethod
+    def _guard_generated_response(
+        response: str, usage_context: str = ""
+    ) -> str:
+        """Replace unsupported customer financial claims with a safe limitation."""
+        context_kwh = {
+            float(value)
+            for value in re.findall(
+                r"\b(\d+(?:\.\d+)?)\s*kwh\b",
+                usage_context,
+                re.IGNORECASE,
+            )
+        }
+        response_kwh = [
+            float(value)
+            for value in re.findall(
+                r"\b(\d+(?:\.\d+)?)\s*kwh\b",
+                response,
+                re.IGNORECASE,
+            )
+        ]
+        if UNSUPPORTED_FINANCIAL_CLAIM.search(response) or any(
+            value not in context_kwh for value in response_kwh
+        ):
+            return (
+                "I can't quantify a customer-specific bill or savings impact from "
+                "this chat because no deterministic calculation evidence was supplied. "
+                "Please use the tariff and bill-comparison views for supported estimates."
+            )
+        return response
 
     def _generate_fallback_response(
         self, message: str, usage_context: str, rag_context: list[str]

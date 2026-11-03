@@ -11,9 +11,10 @@ Powercor / United Energy):
     Shoulder  07:00-15:00 and 21:00-22:00 on business days
     Off-peak  22:00-07:00 every day, and all day on weekends
 
-NEM12 timestamps are interval ends in fixed market time (UTC+10). ToU periods are
-evaluated at each interval's start after converting that instant to the meter's local
-civil timezone, including DST. See ``app/services/nem12_parser.py`` for ingestion details.
+The current application interprets naive NEM12 timestamps as interval ends in
+fixed market time (UTC+10), but the applicable AEMO procedure has not yet been
+independently verified. ToU conversion remains a compatibility assumption, not
+an authoritative metering rule. See ``app/services/nem12_parser.py``.
 """
 
 from __future__ import annotations
@@ -69,6 +70,30 @@ class _HasInterval(Protocol):
     interval_minutes: int
 
 
+class _EffectiveTariffRevision(Protocol):
+    """Fields required to test a tariff revision's evidenced effective dates."""
+
+    confirmed_at: datetime | None
+    effective_from: date | None
+    effective_to: date | None
+    is_illustrative: bool
+
+
+def applicable_tariff_revisions(
+    revisions: Iterable[_EffectiveTariffRevision], target_date: date
+) -> list[_EffectiveTariffRevision]:
+    """Return confirmed, non-illustrative tariff revisions covering one local date."""
+    return [
+        revision
+        for revision in revisions
+        if revision.confirmed_at is not None
+        and not revision.is_illustrative
+        and revision.effective_from is not None
+        and revision.effective_from <= target_date
+        and (revision.effective_to is None or target_date <= revision.effective_to)
+    ]
+
+
 MARKET_TIME = timezone(timedelta(hours=10), name="AEST")
 STATE_TIMEZONES = {
     "ACT": "Australia/Sydney",
@@ -93,10 +118,10 @@ def timezone_for_state(state: str) -> ZoneInfo:
 
 
 def market_timestamp_to_local(timestamp: datetime, state: str) -> datetime:
-    """Convert a NEM market-time timestamp to the meter's local civil time.
+    """Convert timestamps using the application's provisional market-time assumption.
 
-    Naive timestamps are interpreted as fixed UTC+10 market wall-clock values. An aware
-    timestamp is already an unambiguous instant and is converted directly.
+    Naive timestamps use fixed UTC+10 for compatibility. NEM12 rows marked with
+    an unverified basis must not be used for validated metrics.
     """
     market_instant = (
         timestamp.replace(tzinfo=MARKET_TIME)

@@ -1,4 +1,5 @@
 """ETL helpers to build time-series datasets from DB models."""
+
 from typing import Optional
 
 import pandas as pd
@@ -7,7 +8,9 @@ from sqlalchemy.orm import Session
 from app.models.aggregate import DailyAggregate
 
 
-def extract_daily_series(db: Session, meter_id: int, start_date: Optional[str] = None, end_date: Optional[str] = None) -> pd.DataFrame:
+def extract_daily_series(
+    db: Session, meter_id: int, start_date: Optional[str] = None, end_date: Optional[str] = None
+) -> pd.DataFrame:
     """Return a DataFrame with columns `ds` (date) and `y` (kWh) suitable for forecasting.
 
     Dates are returned as pandas datetime and sorted ascending.

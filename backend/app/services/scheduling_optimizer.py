@@ -21,7 +21,6 @@ from app.schemas.scheduling import (
     SchedulingRequestV1,
     SchedulingStatus,
 )
-from app.services.tariff import TouPeriod, classify_tou_period
 
 SOLVER_TIME_LIMIT_SECONDS = 5.0
 _FEASIBILITY_TOLERANCE = 1e-6
@@ -34,6 +33,7 @@ class OptimizationResult:
     status: SchedulingStatus
     candidate_schedule: ScheduleV1 | None
     reference_schedule: ScheduleV1
+    preferred_schedule: ScheduleV1
     objective_breakdown: ObjectiveBreakdownV1
     blockers: list[str]
 
@@ -84,15 +84,6 @@ def interval_energy_rates_aud(
                 rate = _valid_rate(matches[0].get("rate_cents_kwh"))
         elif tariff.tariff_type == "flat":
             rate = _valid_rate(tariff.flat_rate_cents_kwh)
-        elif tariff.tariff_type in ("tou", "demand") and state.upper() == "VIC":
-            period = classify_tou_period(local_start)
-            rate_field = {
-                TouPeriod.PEAK: tariff.peak_rate_cents_kwh,
-                TouPeriod.SHOULDER: tariff.shoulder_rate_cents_kwh,
-                TouPeriod.OFF_PEAK: tariff.off_peak_rate_cents_kwh,
-            }[period]
-            rate = _valid_rate(rate_field)
-
         if rate is None:
             return None
         result.append(rate * gst_multiplier / 100)
@@ -307,7 +298,7 @@ def _selected_schedule(
     interval_prices_aud_per_kwh: list[float],
     selected: dict[int, _Candidate | None],
     *,
-    method: Literal["milp", "deterministic_greedy"],
+    method: Literal["milp", "deterministic_greedy", "preferred"],
 ) -> ScheduleV1:
     total_energy, total_cost, scheduled_tasks = _schedule_metrics(
         request, interval_prices_aud_per_kwh, selected
@@ -318,6 +309,75 @@ def _selected_schedule(
         tasks=scheduled_tasks,
         total_energy_kwh=total_energy,
         total_cost_aud=total_cost,
+    )
+
+
+def _preferred_schedule(
+    request: SchedulingRequestV1,
+    interval_prices_aud_per_kwh: list[float],
+) -> ScheduleV1:
+    """Price the exact requested start times when all tasks are jointly feasible."""
+    selected: dict[int, _Candidate | None] = {}
+    starts = [
+        item.interval_start.astimezone(timezone.utc)
+        for item in request.baseline_profile.intervals
+    ]
+    step_hours = request.interval_minutes / 60
+    for task_index, task in enumerate(request.tasks):
+        if task.preferred_start is None:
+            return ScheduleV1(
+                status="not_found",
+                method="preferred",
+                reason=f"Task {task.task_id} has no preferred start time.",
+                tasks=[],
+            )
+        preferred_start = task.preferred_start.astimezone(timezone.utc)
+        start_index = next(
+            (index for index, start in enumerate(starts) if start == preferred_start),
+            None,
+        )
+        duration_slots = task.duration_minutes // request.interval_minutes
+        if start_index is None or start_index + duration_slots > len(starts):
+            return ScheduleV1(
+                status="not_found",
+                method="preferred",
+                reason=f"Preferred start for task {task.task_id} is unavailable.",
+                tasks=[],
+            )
+        power_kw = _task_power_kw(task)
+        energy_cost = sum(
+            power_kw * step_hours * interval_prices_aud_per_kwh[slot]
+            for slot in range(start_index, start_index + duration_slots)
+        )
+        selected[task_index] = _Candidate(
+            start_index=start_index,
+            power_kw=power_kw,
+            energy_cost_aud=energy_cost,
+            preference_penalty_aud=0.0,
+        )
+
+    power_limit = _effective_power_limit(request)
+    if power_limit is not None:
+        interval_power = [item.demand_kw for item in request.baseline_profile.intervals]
+        for task_index, candidate in selected.items():
+            if candidate is None:
+                continue
+            duration_slots = request.tasks[task_index].duration_minutes // request.interval_minutes
+            for slot in range(candidate.start_index, candidate.start_index + duration_slots):
+                interval_power[slot] += candidate.power_kw
+                if interval_power[slot] > power_limit + _FEASIBILITY_TOLERANCE:
+                    return ScheduleV1(
+                        status="not_found",
+                        method="preferred",
+                        reason="Preferred task starts exceed a configured power limit.",
+                        tasks=[],
+                    )
+
+    return _selected_schedule(
+        request,
+        interval_prices_aud_per_kwh,
+        selected,
+        method="preferred",
     )
 
 
@@ -532,6 +592,7 @@ def optimize_schedule_v1(
         raise ValueError("time_limit_seconds must be finite and greater than zero")
 
     candidates_by_task, durations = _build_candidates(request, interval_prices_aud_per_kwh)
+    preferred = _preferred_schedule(request, interval_prices_aud_per_kwh)
     reference = _greedy_reference(
         request,
         interval_prices_aud_per_kwh,
@@ -566,6 +627,7 @@ def optimize_schedule_v1(
             status=status,
             candidate_schedule=None,
             reference_schedule=reference,
+            preferred_schedule=preferred,
             objective_breakdown=ObjectiveBreakdownV1(
                 baseline_energy_cost_aud=round(baseline_cost, 6)
             ),
@@ -587,10 +649,12 @@ def optimize_schedule_v1(
     )
     reference_preference = reference_penalties[0] if reference_penalties is not None else None
     reference_omission = reference_penalties[1] if reference_penalties is not None else None
+    preferred_cost = preferred.total_cost_aud
     return OptimizationResult(
         status=SchedulingStatus.FEASIBLE,
         candidate_schedule=candidate_schedule,
         reference_schedule=reference,
+        preferred_schedule=preferred,
         objective_breakdown=ObjectiveBreakdownV1(
             baseline_energy_cost_aud=round(baseline_cost, 6),
             candidate_energy_cost_aud=candidate_cost,
@@ -614,6 +678,17 @@ def optimize_schedule_v1(
                 if reference_cost is not None
                 and reference_preference is not None
                 and reference_omission is not None
+                else None
+            ),
+            preferred_energy_cost_aud=preferred_cost,
+            milp_vs_preferred_energy_cost_delta_aud=(
+                round(candidate_cost - preferred_cost, 6)
+                if preferred_cost is not None
+                else None
+            ),
+            greedy_vs_preferred_energy_cost_delta_aud=(
+                round(reference_cost - preferred_cost, 6)
+                if reference_cost is not None and preferred_cost is not None
                 else None
             ),
         ),

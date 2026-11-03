@@ -1,6 +1,6 @@
 """Meter management endpoints."""
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
@@ -46,6 +46,7 @@ async def create_meter(
         nmi=meter_data.nmi,
         meter_serial=meter_data.meter_serial,
         register_id=meter_data.register_id,
+        mdm_data_stream_identifier=meter_data.mdm_data_stream_identifier,
         suffix=meter_data.suffix,
         unit_of_measure=meter_data.unit_of_measure,
         interval_minutes=meter_data.interval_minutes,

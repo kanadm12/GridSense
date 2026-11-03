@@ -56,7 +56,7 @@ export default function ForgotPasswordScreen() {
     try {
       await api.post('/auth/forgot-password', { email });
       setState('sent');
-    } catch (error) {
+    } catch {
       // Still show success (security best practice)
       setState('sent');
     }
@@ -109,7 +109,7 @@ export default function ForgotPasswordScreen() {
 
           <Text style={styles.title}>Forgot Password?</Text>
           <Text style={styles.description}>
-            Enter your email address and we'll send you a link to reset your password.
+            Enter your email address and we&apos;ll send you a link to reset your password.
           </Text>
 
           <View style={styles.inputContainer}>
@@ -151,10 +151,10 @@ export default function ForgotPasswordScreen() {
 
           <Text style={styles.title}>Check Your Email</Text>
           <Text style={styles.description}>
-            If an account exists for {email}, you'll receive a password reset link shortly.
+            If an account exists for {email}, you&apos;ll receive a password reset link shortly.
           </Text>
           <Text style={styles.hint}>
-            Don't see it? Check your spam folder.
+            Don&apos;t see it? Check your spam folder.
           </Text>
 
           <View style={styles.tokenSection}>
@@ -204,7 +204,7 @@ export default function ForgotPasswordScreen() {
 
         <Text style={styles.title}>Create New Password</Text>
         <Text style={styles.description}>
-          Enter your new password below. Make sure it's at least 8 characters.
+          Enter your new password below. Make sure it&apos;s at least 8 characters.
         </Text>
 
         <View style={styles.inputContainer}>

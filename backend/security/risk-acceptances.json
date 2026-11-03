@@ -1,0 +1,43 @@
+{
+  "description": "Risk-acceptance register for the GridSense release security gate. Only entries with status APPROVED, an approved_by value and a review_by date on or after the scan date are honoured by backend/scripts/security_gate.py. PROPOSED entries are documentation only and do not suppress findings.",
+  "acceptances": [
+    {
+      "id": "RA-CHROMADB-PIPAUDIT-001",
+      "scanner": "pip-audit",
+      "package": "chromadb",
+      "installed_version": "1.5.9",
+      "advisory_ids": ["PYSEC-2026-311", "PYSEC-2026-3813", "PYSEC-2026-3814", "PYSEC-2026-3815"],
+      "severity": "CRITICAL (PYSEC-2026-311, PYSEC-2026-3814); HIGH (PYSEC-2026-3813, PYSEC-2026-3815)",
+      "fixed_version": "none published",
+      "scope": "chromadb 1.5.9 only. GridSense uses in-process Chroma.from_texts (rag_engine.py); no HTTP server, persistent client or remote code loading.",
+      "status": "PROPOSED",
+      "owner": "Project maintainer — approval pending",
+      "approved_by": null,
+      "approved_on": null,
+      "review_by": "2026-12-31",
+      "evidence": "backend/tests/test_chromadb_exposure.py"
+    },
+    {
+      "id": "RA-CHROMADB-TRIVY-001",
+      "scanner": "trivy",
+      "package": "chromadb",
+      "installed_version": "1.5.9",
+      "advisory_ids": ["CVE-2026-45829", "CVE-2026-45830", "CVE-2026-45831", "CVE-2026-45833"],
+      "maps_to": {
+        "CVE-2026-45829": "PYSEC-2026-311",
+        "CVE-2026-45830": "PYSEC-2026-3813",
+        "CVE-2026-45831": "PYSEC-2026-3815",
+        "CVE-2026-45833": "PYSEC-2026-3814"
+      },
+      "severity": "CRITICAL (CVE-2026-45829, CVE-2026-45833); HIGH (CVE-2026-45830, CVE-2026-45831)",
+      "fixed_version": "none published",
+      "scope": "chromadb 1.5.9 only, same usage constraints as RA-CHROMADB-PIPAUDIT-001.",
+      "status": "PROPOSED",
+      "owner": "Project maintainer — approval pending",
+      "approved_by": null,
+      "approved_on": null,
+      "review_by": "2026-12-31",
+      "evidence": "backend/tests/test_chromadb_exposure.py"
+    }
+  ]
+}

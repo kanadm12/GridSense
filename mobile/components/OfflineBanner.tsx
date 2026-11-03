@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { View, Text, StyleSheet, Animated } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { isOnline, getSyncStatus, formatLastSync } from '@/services/offline';
@@ -13,21 +13,7 @@ export default function OfflineBanner({ showSyncStatus = true }: OfflineBannerPr
   const [lastSync, setLastSync] = useState<number | null>(null);
   const [slideAnim] = useState(new Animated.Value(-50));
 
-  useEffect(() => {
-    checkStatus();
-    const interval = setInterval(checkStatus, 10000); // Check every 10s
-    return () => clearInterval(interval);
-  }, []);
-
-  useEffect(() => {
-    Animated.timing(slideAnim, {
-      toValue: online ? -50 : 0,
-      duration: 300,
-      useNativeDriver: true,
-    }).start();
-  }, [online]);
-
-  const checkStatus = async () => {
+  const checkStatus = useCallback(async () => {
     const isConnected = await isOnline();
     setOnline(isConnected);
 
@@ -35,7 +21,26 @@ export default function OfflineBanner({ showSyncStatus = true }: OfflineBannerPr
       const status = await getSyncStatus();
       setLastSync(status.lastSync);
     }
-  };
+  }, [showSyncStatus]);
+
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => {
+      void checkStatus();
+    });
+    const interval = setInterval(checkStatus, 10000); // Check every 10s
+    return () => {
+      cancelAnimationFrame(frame);
+      clearInterval(interval);
+    };
+  }, [checkStatus]);
+
+  useEffect(() => {
+    Animated.timing(slideAnim, {
+      toValue: online ? -50 : 0,
+      duration: 300,
+      useNativeDriver: true,
+    }).start();
+  }, [online, slideAnim]);
 
   if (online && !showSyncStatus) return null;
 

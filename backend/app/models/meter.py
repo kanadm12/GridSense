@@ -8,10 +8,10 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.models.base import Base, TimestampMixin
 
 if TYPE_CHECKING:
-    from app.models.reading import Reading
-    from app.models.user import User
     from app.models.chat import ChatSession
     from app.models.ml_training import MLTrainingJob
+    from app.models.reading import Reading
+    from app.models.user import User
 
 
 class Meter(Base, TimestampMixin):
@@ -26,6 +26,7 @@ class Meter(Base, TimestampMixin):
     nmi: Mapped[str] = mapped_column(String(10), index=True, nullable=False)
     meter_serial: Mapped[str | None] = mapped_column(String(50), nullable=True)
     register_id: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    mdm_data_stream_identifier: Mapped[str | None] = mapped_column(String(2), nullable=True)
 
     # Meter configuration
     suffix: Mapped[str | None] = mapped_column(String(2), nullable=True)  # E1, B1, etc.
@@ -48,8 +49,12 @@ class Meter(Base, TimestampMixin):
     readings: Mapped[list["Reading"]] = relationship(
         "Reading", back_populates="meter", lazy="dynamic", cascade="all, delete-orphan"
     )
-    chat_sessions: Mapped[list["ChatSession"]] = relationship("ChatSession", back_populates="meter", cascade="all, delete-orphan")
-    ml_training_jobs: Mapped[list["MLTrainingJob"]] = relationship("MLTrainingJob", back_populates="meter", cascade="all, delete-orphan")
+    chat_sessions: Mapped[list["ChatSession"]] = relationship(
+        "ChatSession", back_populates="meter", cascade="all, delete-orphan"
+    )
+    ml_training_jobs: Mapped[list["MLTrainingJob"]] = relationship(
+        "MLTrainingJob", back_populates="meter", cascade="all, delete-orphan"
+    )
 
     def __repr__(self) -> str:
         return f"<Meter(id={self.id}, nmi={self.nmi})>"

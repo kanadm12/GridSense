@@ -69,8 +69,13 @@ def _seed_month_to_date(db, meter_id: int) -> None:
                     meter_id=meter_id,
                     timestamp=ts,
                     value=1.0,
+                    source_value=1.0,
+                    source_unit="kWh",
+                    provenance_kind="measured",
+                    source_time_basis="fixed_utc_plus_10",
                     quality="A",
                     register_type="B",
+                    direction="import",
                 )
             )
         day += timedelta(days=1)

@@ -53,6 +53,8 @@ def test_fixed_baseline_is_counted_once_in_schedule_cost():
     assert result.objective_breakdown.energy_cost_delta_aud == pytest.approx(0.0)
     assert result.candidate_schedule.total_energy_kwh == pytest.approx(4.0)
     assert result.candidate_schedule.total_cost_aud == pytest.approx(1.12)
+    assert result.preferred_schedule.total_cost_aud == pytest.approx(1.12)
+    assert result.objective_breakdown.milp_vs_preferred_energy_cost_delta_aud == pytest.approx(0)
 
 
 def test_flat_tariff_ties_are_repeatable():
@@ -159,11 +161,13 @@ def test_optional_tasks_use_explicit_omission_penalty(omission_penalty, expected
 def test_optional_tasks_without_penalty_use_no_savings_treatment():
     payload = _request_payload()
     payload["tasks"][0]["mandatory"] = False
+    payload["tasks"][0]["preferred_start"] = None
 
     result = optimize_schedule_v1(_request(payload), [0.0] * 4)
 
     assert result.candidate_schedule.tasks[0].omitted is True
     assert result.objective_breakdown.omission_penalty_aud == pytest.approx(0.0)
+    assert result.preferred_schedule.status == "not_found"
 
 
 def test_power_limit_can_make_required_task_infeasible():
@@ -176,6 +180,7 @@ def test_power_limit_can_make_required_task_infeasible():
     assert result.status == SchedulingStatus.INFEASIBLE
     assert result.candidate_schedule is None
     assert result.reference_schedule.status == "not_found"
+    assert result.preferred_schedule.status == "not_found"
 
 
 def test_dst_transition_uses_contiguous_utc_intervals_and_local_offsets():

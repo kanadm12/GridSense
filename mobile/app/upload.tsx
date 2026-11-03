@@ -43,7 +43,7 @@ export default function UploadScreen() {
         setState('selected');
         setError(null);
       }
-    } catch (err) {
+    } catch {
       Alert.alert('Error', 'Failed to pick file');
     }
   };
@@ -56,7 +56,7 @@ export default function UploadScreen() {
       if (status.status === 'completed' || status.status === 'failed') {
         return status;
       }
-      await new Promise((resolve) => setTimeout(resolve, 1500));
+      await new Promise<void>((resolve) => setTimeout(resolve, 1500));
     }
     throw new Error('Import is taking longer than expected. Please check back shortly.');
   };
@@ -141,8 +141,8 @@ export default function UploadScreen() {
               <View style={styles.infoContent}>
                 <Text style={styles.infoTitle}>Where to get your NEM12 file?</Text>
                 <Text style={styles.infoText}>
-                  • Log into your energy retailer's website{'\n'}
-                  • Look for "Usage data" or "Smart meter data"{'\n'}
+                  • Log into your energy retailer&apos;s website{'\n'}
+                  • Look for &quot;Usage data&quot; or &quot;Smart meter data&quot;{'\n'}
                   • Download as NEM12 or CSV format
                 </Text>
               </View>

@@ -6,7 +6,7 @@ from datetime import date, timedelta
 from sqlalchemy.orm import Session
 
 from app.models.meter import Meter
-from app.models.tariff import Tariff
+from app.models.tariff import Tariff, TariffRevision
 from app.schemas.recommendation import (
     Recommendation,
     RecommendationCategory,
@@ -14,8 +14,11 @@ from app.schemas.recommendation import (
     RecommendationEstimateStatus,
     RecommendationPriority,
     RecommendationsResponse,
+    RecommendationStatus,
     RecommendationTariffStatus,
 )
+from app.services.calculation_evidence import CalculationEvidenceService
+from app.services.tariff import applicable_tariff_revisions
 from app.services.usage_analyzer import UsageAnalyzer
 
 
@@ -23,9 +26,9 @@ from app.services.usage_analyzer import UsageAnalyzer
 class UsagePattern:
     """Analyzed usage patterns for a meter."""
 
-    avg_daily_kwh: float
-    peak_hour: int
-    peak_avg_kwh: float
+    avg_daily_kwh: float | None
+    peak_hour: int | None
+    peak_avg_kwh: float | None
     evening_ratio: float  # % of usage during peak hours (3pm-9pm)
     night_ratio: float  # % of usage during off-peak (10pm-7am)
     daytime_ratio: float  # % of usage between 9am and 3pm
@@ -46,65 +49,99 @@ class RecommendationEngine:
     def __init__(self, db: Session):
         self.db = db
         self.analyzer = UsageAnalyzer(db)
+        self._latest_summary = None
+        self._analysis_start_date: date | None = None
+        self._analysis_end_date: date | None = None
 
-    def _tariff_context(
-        self, meter_id: int
-    ) -> tuple[RecommendationTariffStatus, float | None]:
+    def _tariff_context(self, meter_id: int) -> RecommendationTariffStatus:
         meter = self.db.query(Meter).filter(Meter.id == meter_id).first()
         if meter is None:
-            return RecommendationTariffStatus.MISSING, None
+            return RecommendationTariffStatus.MISSING
 
-        tariff = self.db.query(Tariff).filter(Tariff.user_id == meter.user_id).first()
+        tariff = (
+            self.db.query(Tariff)
+            .filter(
+                Tariff.user_id == meter.user_id,
+                Tariff.archived_at.is_(None),
+            )
+            .first()
+        )
         if tariff is None:
-            return RecommendationTariffStatus.MISSING, None
-        if tariff.is_preset:
-            return RecommendationTariffStatus.ILLUSTRATIVE, None
-
+            return RecommendationTariffStatus.MISSING
         today = date.today()
-        if (
-            (tariff.effective_from is not None and today < tariff.effective_from)
-            or (tariff.effective_to is not None and today > tariff.effective_to)
-        ):
-            return RecommendationTariffStatus.OUTSIDE_EFFECTIVE_DATES, None
+        revisions = (
+            self.db.query(TariffRevision)
+            .filter(TariffRevision.tariff_id == tariff.id)
+            .order_by(TariffRevision.revision_number)
+            .all()
+        )
+        applicable = applicable_tariff_revisions(revisions, today)
+        if len(applicable) > 1:
+            return RecommendationTariffStatus.MISSING
+        if not applicable:
+            if not revisions and tariff.is_preset:
+                return RecommendationTariffStatus.ILLUSTRATIVE
+            if revisions and revisions[-1].is_illustrative:
+                return RecommendationTariffStatus.ILLUSTRATIVE
+            if any(revision.effective_from is not None for revision in revisions):
+                return RecommendationTariffStatus.OUTSIDE_EFFECTIVE_DATES
+            return RecommendationTariffStatus.MISSING
 
-        if tariff.tariff_type == "flat":
-            if tariff.flat_rate_cents_kwh is None:
-                return RecommendationTariffStatus.MISSING_RATES, None
-            return RecommendationTariffStatus.CONFIGURED, 0.0
+        revision = applicable[0]
+        if revision.tariff_type == "flat":
+            if revision.flat_rate_cents_kwh is None:
+                return RecommendationTariffStatus.MISSING_RATES
+            return RecommendationTariffStatus.CONFIGURED
 
-        if tariff.periods:
+        if revision.periods:
             rates = [
                 float(period["rate_cents_kwh"])
-                for period in tariff.periods
+                for period in revision.periods
                 if period.get("rate_cents_kwh") is not None
             ]
-        elif tariff.tariff_type in {"tou", "demand", "flexible"}:
+        elif revision.tariff_type in {"tou", "demand", "flexible"}:
             rates = [
                 float(rate)
                 for rate in (
-                    tariff.peak_rate_cents_kwh,
-                    tariff.shoulder_rate_cents_kwh,
-                    tariff.off_peak_rate_cents_kwh,
+                    revision.peak_rate_cents_kwh,
+                    revision.shoulder_rate_cents_kwh,
+                    revision.off_peak_rate_cents_kwh,
                 )
                 if rate is not None
             ]
         else:
-            return RecommendationTariffStatus.MISSING_RATES, None
+            return RecommendationTariffStatus.MISSING_RATES
 
         if len(rates) < 2:
-            return RecommendationTariffStatus.MISSING_RATES, None
-        return (
-            RecommendationTariffStatus.CONFIGURED,
-            round(max(rates) - min(rates), 2),
+            return RecommendationTariffStatus.MISSING_RATES
+        return RecommendationTariffStatus.CONFIGURED
+
+    @staticmethod
+    def summary_is_eligible_for_patterns(summary: object | None, days: int = 7) -> bool:
+        """Require complete, classified, time-resolved actual days for pattern claims."""
+        return bool(
+            summary is not None
+            and getattr(summary, "coverage_status", None) == "complete"
+            and getattr(summary, "coverage_fraction", 0) == 1
+            and getattr(summary, "days_count", 0) >= days
+            and getattr(summary, "channel_classification_status", None) == "classified"
+            and getattr(summary, "unresolved_direction_count", 0) == 0
+            and getattr(summary, "legacy_direction_unverified_count", 0) == 0
+            and getattr(summary, "unresolved_time_basis_count", 0) == 0
+            and getattr(summary, "provenance_status", None)
+            in {"measured", "synthetic", "mixed"}
         )
 
-    def analyze_patterns(self, meter_id: int, days: int = 30) -> UsagePattern | None:
-        """Analyze usage patterns for a meter."""
-        end_date = date.today()
-        start_date = end_date - timedelta(days=days)
+    def analyze_patterns(self, meter_id: int, days: int = 7) -> UsagePattern | None:
+        """Analyze patterns only across fully covered, classifiable local days."""
+        end_date = date.today() - timedelta(days=1)
+        start_date = end_date - timedelta(days=days - 1)
+        self._analysis_start_date = start_date
+        self._analysis_end_date = end_date
 
         summary = self.analyzer.get_usage_summary(meter_id, start_date, end_date)
-        if not summary:
+        self._latest_summary = summary
+        if not self.summary_is_eligible_for_patterns(summary, days):
             return None
 
         hourly = self.analyzer.get_hourly_usage(meter_id, start_date, end_date)
@@ -146,6 +183,72 @@ class RecommendationEngine:
             days_analyzed=summary.days_count,
         )
 
+    def _data_quality_recommendation(
+        self, summary: object | None
+    ) -> Recommendation:
+        if summary is None:
+            observed = "No eligible import summary is available for the latest seven local days."
+            action = (
+                "Upload at least seven complete days of interval data with verified "
+                "direction and time basis."
+            )
+            requirements = [
+                "Seven complete local days of eligible import intervals",
+                "Confirmed import direction and supported source time basis",
+            ]
+            reason = "The required observation window cannot currently be evaluated."
+        else:
+            observed = (
+                f"Coverage is {getattr(summary, 'coverage_fraction', 0) * 100:.1f}% "
+                f"({getattr(summary, 'eligible_interval_count', 0)} eligible of "
+                f"{getattr(summary, 'expected_interval_count', 0)} expected intervals); "
+                f"status: {getattr(summary, 'coverage_status', 'unavailable')}."
+            )
+            reasons = []
+            if getattr(summary, "unresolved_direction_count", 0) or getattr(
+                summary, "legacy_direction_unverified_count", 0
+            ):
+                reasons.append("meter channel direction needs confirmation")
+            if getattr(summary, "unresolved_time_basis_count", 0):
+                reasons.append("source timestamp basis is unresolved")
+            if getattr(summary, "coverage_status", None) != "complete":
+                reasons.append("the seven-day interval window is incomplete")
+            if not reasons:
+                reasons.append("the available readings do not meet the pattern eligibility policy")
+            reason = "Pattern analysis is withheld because " + ", ".join(reasons) + "."
+            action = (
+                "Confirm channel direction and source-time basis, then provide a fully "
+                "covered seven-day interval window."
+            )
+            requirements = [
+                "Complete 100% eligible coverage for seven local days",
+                "No unresolved or legacy-unverified import direction",
+                "Verified source time basis for every interval",
+            ]
+
+        return Recommendation(
+            id="data_quality_action",
+            title="Improve meter-data coverage",
+            description="A data-quality action is needed before usage-pattern advice is supported.",
+            category=RecommendationCategory.GENERAL,
+            priority=RecommendationPriority.HIGH,
+            potential_savings_kwh=None,
+            potential_savings_dollars=None,
+            action=action,
+            reason=reason,
+            observed_fact=observed,
+            proposed_action=action,
+            conditional_opportunity="No energy or financial impact is quantified.",
+            estimate_status=RecommendationEstimateStatus.UNQUANTIFIED,
+            baseline="No eligible seven-day pattern baseline is available.",
+            assumptions=[],
+            applicable_intervals="Latest seven complete local dates before today.",
+            uncertainty=reason,
+            confidence=RecommendationConfidence.LOW,
+            data_requirements=requirements,
+            status=RecommendationStatus.UNQUANTIFIED,
+        )
+
     @staticmethod
     def _unquantified_recommendation(
         *,
@@ -160,7 +263,6 @@ class RecommendationEngine:
         baseline: str,
         applicable_intervals: str,
         uncertainty: str,
-        rate_difference_cents_kwh: float | None = None,
     ) -> Recommendation:
         return Recommendation(
             id=id,
@@ -188,7 +290,7 @@ class RecommendationEngine:
                 ),
                 "No appliance-specific load is assumed to be shiftable or reducible.",
             ],
-            rate_difference_cents_kwh=rate_difference_cents_kwh,
+            rate_difference_cents_kwh=None,
             applicable_intervals=applicable_intervals,
             uncertainty=uncertainty,
             confidence=RecommendationConfidence.LOW,
@@ -200,49 +302,54 @@ class RecommendationEngine:
             ],
         )
 
+    def _attach_evidence(
+        self,
+        meter_id: int,
+        recommendations: list[Recommendation],
+        *,
+        pattern: UsagePattern | None,
+        tariff_revision_id: int | None,
+    ) -> None:
+        meter = self.db.query(Meter).filter(Meter.id == meter_id).first()
+        if meter is None:
+            return
+        start_date = self._analysis_start_date or (date.today() - timedelta(days=7))
+        end_date = self._analysis_end_date or (date.today() - timedelta(days=1))
+        readings = self.analyzer._readings_for_window(
+            meter_id, meter.state, start_date, end_date
+        )
+        for recommendation in recommendations:
+            evidence = CalculationEvidenceService.build_usage_evidence(
+                meter=meter,
+                recommendation=recommendation,
+                readings=readings,
+                summary=self._latest_summary,
+                pattern=pattern,
+                tariff_revision_id=tariff_revision_id,
+                analysis_start_date=self._analysis_start_date,
+                analysis_end_date=self._analysis_end_date,
+            )
+            recommendation.calculation_evidence = evidence
+            recommendation.status = evidence.status
+
     def generate_recommendations(self, meter_id: int) -> RecommendationsResponse:
         """Generate personalized recommendations based on usage patterns."""
-        tariff_status, rate_difference = self._tariff_context(meter_id)
+        self._latest_summary = None
+        self._analysis_start_date = None
+        self._analysis_end_date = None
+        tariff_status = self._tariff_context(meter_id)
         patterns = self.analyze_patterns(meter_id)
 
         if not patterns:
+            recommendation = self._data_quality_recommendation(self._latest_summary)
+            self._attach_evidence(
+                meter_id,
+                [recommendation],
+                pattern=None,
+                tariff_revision_id=None,
+            )
             return RecommendationsResponse(
-                recommendations=[
-                    Recommendation(
-                        id="no_data",
-                        title="Upload more data",
-                        description=(
-                            "We need more usage data to provide "
-                            "personalized recommendations."
-                        ),
-                        category=RecommendationCategory.GENERAL,
-                        priority=RecommendationPriority.HIGH,
-                        action="Upload at least 7 days of smart meter data",
-                        reason="Insufficient data for analysis",
-                        observed_fact=(
-                            "There is not enough classifiable import data for a "
-                            "usage-pattern analysis."
-                        ),
-                        proposed_action=(
-                            "Upload a valid interval-data file with classifiable "
-                            "import readings."
-                        ),
-                        conditional_opportunity=(
-                            "Not available until sufficient import data and "
-                            "opportunity inputs are supplied."
-                        ),
-                        estimate_status=RecommendationEstimateStatus.UNQUANTIFIED,
-                        baseline="No classifiable import baseline is available.",
-                        assumptions=[],
-                        applicable_intervals="Not available",
-                        uncertainty=(
-                            "The source data does not currently support a "
-                            "usage-pattern finding."
-                        ),
-                        confidence=RecommendationConfidence.LOW,
-                        data_requirements=["At least 7 days of classifiable import readings"],
-                    )
-                ],
+                recommendations=[recommendation],
                 total_potential_savings=None,
                 tariff_status=tariff_status,
             )
@@ -285,11 +392,6 @@ class RecommendationEngine:
                     uncertainty=(
                         "Aggregate readings cannot attribute evening use to an "
                         "appliance or show what portion is flexible."
-                    ),
-                    rate_difference_cents_kwh=(
-                        rate_difference
-                        if tariff_status == RecommendationTariffStatus.CONFIGURED
-                        else None
                     ),
                 )
             )
@@ -372,7 +474,10 @@ class RecommendationEngine:
             )
 
         # Rule 4: This fixed review threshold is not a claim about a typical household.
-        if patterns.avg_daily_kwh > self.HIGH_DAILY_USAGE:
+        if (
+            patterns.avg_daily_kwh is not None
+            and patterns.avg_daily_kwh > self.HIGH_DAILY_USAGE
+        ):
             recommendations.append(
                 self._unquantified_recommendation(
                     id="energy_audit",
@@ -471,11 +576,6 @@ class RecommendationEngine:
                         "This comparison excludes retailer eligibility, "
                         "controlled loads, demand windows, discounts, and other terms."
                     ),
-                    rate_difference_cents_kwh=(
-                        rate_difference
-                        if tariff_status == RecommendationTariffStatus.CONFIGURED
-                        else None
-                    ),
                 )
             )
 
@@ -487,6 +587,50 @@ class RecommendationEngine:
         }
         recommendations.sort(key=lambda r: priority_order[r.priority])
 
+        if not recommendations:
+            recommendations.append(
+                Recommendation(
+                    id="no_supported_action",
+                    title="No action supported by current evidence",
+                    description=(
+                        "Eligible meter observations were reviewed, but no "
+                        "actionable pattern crossed the current review rules."
+                    ),
+                    category=RecommendationCategory.GENERAL,
+                    priority=RecommendationPriority.LOW,
+                    potential_savings_kwh=None,
+                    potential_savings_dollars=None,
+                    action="Continue reviewing complete interval data and confirmed tariff terms.",
+                    reason=(
+                        "No supported action was identified; this is not a finding "
+                        "that usage is efficient."
+                    ),
+                    observed_fact=(
+                        f"{patterns.total_kwh:.3f} kWh of eligible import across "
+                        f"{patterns.days_analyzed} fully covered local days."
+                    ),
+                    proposed_action="No change is recommended from this observation alone.",
+                    conditional_opportunity="No energy or financial impact is quantified.",
+                    estimate_status=RecommendationEstimateStatus.UNQUANTIFIED,
+                    baseline=(
+                        "Complete, quality-eligible imported intervals for the "
+                        "analysis window."
+                    ),
+                    assumptions=[],
+                    applicable_intervals="Latest seven complete local dates before today.",
+                    uncertainty="No tested rule identified a supported action.",
+                    confidence=RecommendationConfidence.MEDIUM,
+                    data_requirements=[],
+                    status=RecommendationStatus.NO_SUPPORTED_ACTION,
+                )
+            )
+
+        self._attach_evidence(
+            meter_id,
+            recommendations,
+            pattern=patterns,
+            tariff_revision_id=None,
+        )
         return RecommendationsResponse(
             recommendations=recommendations,
             total_potential_savings=None,
